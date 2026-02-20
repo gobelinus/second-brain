@@ -1,0 +1,19 @@
+[project]
+name = "brain"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "chromadb>=1.5.1",
+    "llama-index>=0.14.15",
+    "ollama>=0.6.1",
+    "pyyaml>=6.0.3",
+    "typer>=0.24.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.2",
+]
