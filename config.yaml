@@ -22,3 +22,7 @@ metadata:
     - neutral
     - overwhelmed
     - energized
+
+chroma:
+  public_collection: "public_brain"
+  sensitive_collection: "sensitive_brain"

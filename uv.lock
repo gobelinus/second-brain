@@ -247,7 +247,7 @@ wheels = [
 [[package]]
 name = "brain"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "llama-index" },
@@ -273,8 +273,8 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "ruff", specifier = ">=0.15.2" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [[package]]
