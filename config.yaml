@@ -102,11 +102,6 @@ scanner:
   # Blocklist — ordered list of patterns with severity levels.
   # severity: critical | high | warning
   blocklist:
-    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\b"
-      description: "Full name (FirstName LastName)"
-      severity: "warning"
-      note: "Review — may be a public figure or tech term"
-
     - pattern: "\\b\\d{3}[-.]\\d{3}[-.]\\d{4}\\b"
       description: "Phone number pattern"
       severity: "critical"

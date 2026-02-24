@@ -4,184 +4,211 @@ scan_public_summaries.py — Pre-commit hook for public daily summaries.
 Scans staged public markdown files for sensitive content that should
 only appear in daily/sensitive/ files.
 
-Checks:
-  - Internal/corporate URLs (Jira, Confluence, internal tools)
-  - Email addresses
-  - AWS account IDs and ARNs
-  - API keys, tokens, secrets patterns
-  - Internal IP addresses
-  - PR/issue references to private repositories
-  - Common secret key patterns
+All patterns, allowlists, and severity levels are driven by config.yaml.
+Do NOT add patterns here — edit config.yaml scanner section instead.
+
+Evaluation order (enforced per line):
+  1. allowlist       -> if match, SKIP (safe, stop checking this match)
+  2. private_domains -> if match, BLOCK commit (always critical)
+  3. blocklist       -> severity-aware:
+       critical / high  -> BLOCK commit
+       warning          -> LOG only, allow commit
 
 Exit codes:
-  0 — clean, commit proceeds
-  1 — sensitive content found, commit blocked
+  0 — clean or warnings only, commit proceeds
+  1 — critical or high severity findings, commit blocked
 """
 
 import re
 import sys
 from pathlib import Path
 
-# ── Detection Patterns ────────────────────────────────────────────────────────
+# Allow running as a standalone script from repo root
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-PATTERNS = [
-    # Internal / corporate URLs
-    (
-        r"https?://[a-zA-Z0-9\-]+\.atlassian\.net",
-        "Internal Jira/Confluence URL",
-    ),
-    (
-        r"https?://[a-zA-Z0-9\-]+\.internal\b",
-        "Internal domain URL",
-    ),
-    (
-        r"https?://[a-zA-Z0-9\-]*stage\.[a-zA-Z0-9\-]+\.[a-z]+",
-        "Staging environment URL",
-    ),
-    (
-        r"https?://[a-zA-Z0-9\-]*prod[0-9]*[\.\-][a-zA-Z0-9\-]+\.[a-z]+",
-        "Production environment URL",
-    ),
-    # Email addresses
-    (
-        r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
-        "Email address",
-    ),
-    # AWS sensitive patterns
-    (
-        r"arn:aws:[a-zA-Z0-9\-]+:[a-zA-Z0-9\-]*:[0-9]{12}",
-        "AWS ARN with account ID",
-    ),
-    (
-        r"\b[0-9]{12}\b",
-        "Possible AWS account ID (12-digit number)",
-    ),
-    (
-        r"AKIA[0-9A-Z]{16}",
-        "AWS Access Key ID",
-    ),
-    (
-        r"(?i)(aws_secret|secret_key|aws_key)\s*[=:]\s*\S+",
-        "AWS secret key assignment",
-    ),
-    # Generic secret patterns
-    (
-        r"(?i)(password|passwd|pwd)\s*[=:]\s*\S+",
-        "Password assignment",
-    ),
-    (
-        r"(?i)(api_key|apikey|api-key)\s*[=:]\s*\S+",
-        "API key assignment",
-    ),
-    (
-        r"(?i)(token|secret|credential)\s*[=:]\s*['\"]?\w{8,}['\"]?",
-        "Token or secret assignment",
-    ),
-    (
-        r"(?i)bearer\s+[a-zA-Z0-9\-_\.]{20,}",
-        "Bearer token",
-    ),
-    # Private GitHub repos (org-specific)
-    (
-        r"https?://github\.com/[A-Z][a-zA-Z0-9]+/[a-zA-Z0-9\-]+/pull/[0-9]+",
-        "Private GitHub PR link (check if repo is public)",
-    ),
-    # Internal IP addresses
-    (
-        r"\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
-        "Internal IP address (10.x.x.x)",
-    ),
-    (
-        r"\b172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}\b",
-        "Internal IP address (172.16-31.x.x)",
-    ),
-    (
-        r"\b192\.168\.\d{1,3}\.\d{1,3}\b",
-        "Internal IP address (192.168.x.x)",
-    ),
-    # CloudWatch / internal AWS console URLs
-    (
-        r"https?://[a-z0-9\-]+\.console\.aws\.amazon\.com",
-        "AWS console URL (may contain account context)",
-    ),
-]
+from brain.config import BrainConfig
 
-# ── Allowlist — known safe patterns to ignore ─────────────────────────────────
-# Add regex patterns here for things that look sensitive but are safe to commit
-
-ALLOWLIST = [
-    r"example@example\.com",
-    r"user@company\.com",
-    r"ollama",  # local tool references
-    r"localhost",  # local URLs are fine
-    r"127\.0\.0\.1",  # loopback
-]
+# ── Findings dataclass ────────────────────────────────────────────────────────
 
 
-# ── Scanner ───────────────────────────────────────────────────────────────────
+class Finding:
+    def __init__(
+        self,
+        line_num: int,
+        matched_text: str,
+        description: str,
+        severity: str,
+        note: str = "",
+    ):
+        self.line_num = line_num
+        self.matched_text = matched_text
+        self.description = description
+        self.severity = severity  # critical | high | warning
+        self.note = note
+
+    @property
+    def blocks_commit(self) -> bool:
+        return self.severity in ("critical", "high")
 
 
-def is_allowlisted(match: str) -> bool:
-    """Return True if the match is in the known-safe allowlist."""
-    return any(re.search(pattern, match, re.IGNORECASE) for pattern in ALLOWLIST)
+# ── Core scanner ──────────────────────────────────────────────────────────────
 
 
-def scan_file(file_path: Path) -> list[tuple[int, str, str]]:
+def is_allowlisted(text: str, allowlist: list[str]) -> bool:
+    """
+    Return True if the matched text contains any allowlisted pattern.
+    Allowlist checked FIRST — if safe, skip all further checks for this match.
+    """
+    return any(
+        re.search(re.escape(pattern), text, re.IGNORECASE) for pattern in allowlist
+    )
+
+
+def scan_line(
+    line: str,
+    line_num: int,
+    allowlist: list[str],
+    private_domains: list[dict],
+    blocklist: list[dict],
+) -> list[Finding]:
+    """
+    Scan a single line using the three-tier evaluation order.
+    Returns list of Finding objects for this line.
+    """
+    findings = []
+
+    # Skip markdown comment lines and bare code fence markers
+    stripped = line.strip()
+    if stripped.startswith("<!--") or stripped == "```":
+        return findings
+
+    # Collect all candidate matches from private_domains + blocklist
+    # We evaluate each match independently through the three tiers
+
+    # Tier 2: private_domains — always critical
+    for domain_entry in private_domains:
+        pattern = domain_entry["pattern"]
+        description = domain_entry["description"]
+        for match in re.finditer(pattern, line, re.IGNORECASE):
+            matched_text = match.group(0)
+            # Tier 1: allowlist check first
+            if is_allowlisted(matched_text, allowlist):
+                continue
+            findings.append(
+                Finding(
+                    line_num=line_num,
+                    matched_text=matched_text,
+                    description=description,
+                    severity="critical",
+                )
+            )
+
+    # Tier 3: blocklist — severity-aware
+    for block_entry in blocklist:
+        pattern = block_entry["pattern"]
+        description = block_entry["description"]
+        severity = block_entry.get("severity", "warning")
+        note = block_entry.get("note", "")
+        for match in re.finditer(pattern, line):
+            matched_text = match.group(0)
+            # Tier 1: allowlist check first
+            if is_allowlisted(matched_text, allowlist):
+                continue
+            findings.append(
+                Finding(
+                    line_num=line_num,
+                    matched_text=matched_text,
+                    description=description,
+                    severity=severity,
+                    note=note,
+                )
+            )
+
+    return findings
+
+
+def scan_file(
+    file_path: Path,
+    allowlist: list[str],
+    private_domains: list[dict],
+    blocklist: list[dict],
+) -> list[Finding]:
     """
     Scan a single file for sensitive patterns.
-
-    Returns list of (line_number, matched_text, description) tuples.
+    Returns all Finding objects across all lines.
     """
     findings = []
     lines = file_path.read_text(encoding="utf-8").splitlines()
 
     for line_num, line in enumerate(lines, start=1):
-        # Skip markdown comments and code block markers
-        stripped = line.strip()
-        if stripped.startswith("<!--") or stripped == "```":
-            continue
-
-        for pattern, description in PATTERNS:
-            for match in re.finditer(pattern, line):
-                matched_text = match.group(0)
-                if not is_allowlisted(matched_text):
-                    findings.append((line_num, matched_text, description))
+        findings.extend(
+            scan_line(line, line_num, allowlist, private_domains, blocklist)
+        )
 
     return findings
 
 
+# ── Output formatting ─────────────────────────────────────────────────────────
+
+SEVERITY_LABEL = {
+    "critical": "🚨 CRITICAL",
+    "high": "🔴 HIGH    ",
+    "warning": "⚠️  WARNING ",
+}
+
+
+def print_findings(file_path: Path, findings: list[Finding]) -> None:
+    """Print structured findings grouped by severity — blocking first."""
+    blocking = [f for f in findings if f.blocks_commit]
+    warnings = [f for f in findings if not f.blocks_commit]
+
+    print(f"\n🚨 Sensitive content detected: {file_path}")
+    print("  " + "─" * 58)
+
+    for finding in blocking + warnings:
+        label = SEVERITY_LABEL.get(finding.severity, finding.severity.upper())
+        print(f"  [{label}] Line {finding.line_num}: {finding.description}")
+        print(f"             Match : {finding.matched_text!r}")
+        if finding.note:
+            print(f"             Note  : {finding.note}")
+
+    print()
+    if blocking:
+        print("  🛑 BLOCKED — move content to daily/sensitive/ or update")
+        print("     scanner.allowlist in config.yaml if this is a false positive.")
+    else:
+        print("  ⚠️  Warnings only — commit proceeds. Review before sharing.")
+    print()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 def main(files: list[str]) -> int:
-    """
-    Main entry point — scan all provided files.
-    Returns 0 if clean, 1 if any findings.
-    """
+    cfg = BrainConfig()
+
+    allowlist = cfg.scanner_allowlist
+    private_domains = cfg.scanner_private_domains
+    blocklist = cfg.scanner_blocklist
+
+    has_blocking = False
     all_clean = True
 
     for file_str in files:
         file_path = Path(file_str)
-
         if not file_path.exists():
             continue
 
-        findings = scan_file(file_path)
+        findings = scan_file(file_path, allowlist, private_domains, blocklist)
 
         if findings:
             all_clean = False
-            print(f"\n🚨 Sensitive content detected in: {file_path}")
-            print("─" * 60)
-            for line_num, matched_text, description in findings:
-                print(f"  Line {line_num:>4}: [{description}]")
-                print(f"            {matched_text}")
-            print()
-            print("  ⚠️  Move this content to daily/sensitive/ or")
-            print("      add to ALLOWLIST in scripts/scan_public_summaries.py")
-            print("      if this match is a false positive.")
-            print()
+            print_findings(file_path, findings)
+            if any(f.blocks_commit for f in findings):
+                has_blocking = True
 
     if all_clean:
-        print("✅ Public summaries scan: clean")
+        print("✅ scan_public_summaries: clean")
 
-    return 0 if all_clean else 1
+    return 1 if has_blocking else 0
 
 
 if __name__ == "__main__":
