@@ -178,7 +178,7 @@ class Structurer:
         Validate and sanitize LLM output against expected schema.
         Fills missing fields with safe defaults rather than crashing.
         """
-        allowed_sentiments = self.config.sentiment_options
+        allowed_sentiments = self.config.valid_sentiments
 
         # Ensure all list fields are actually lists
         projects = raw.get("projects", [])
