@@ -11,6 +11,9 @@ Orchestrates the full ingestion flow for a single daily summary:
 
 Idempotent — re-ingesting the same file updates existing records
 rather than creating duplicates.
+
+Composite key: (date + sensitivity) — public and sensitive entries
+for the same date are stored as separate records.
 """
 
 import json
@@ -70,7 +73,9 @@ class TextChunker:
 class SQLiteStore:
     """
     Manages the SQLite metadata store.
-    Handles schema creation and upsert operations.
+
+    Primary key is (date, sensitivity) — composite key ensures
+    public and sensitive entries for the same date coexist cleanly.
     """
 
     def __init__(self, db_path: Path):
@@ -83,7 +88,7 @@ class SQLiteStore:
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS daily_summaries (
-                    date         TEXT PRIMARY KEY,
+                    date         TEXT NOT NULL,
                     sensitivity  TEXT NOT NULL,
                     projects     TEXT NOT NULL DEFAULT '[]',
                     blockers     TEXT NOT NULL DEFAULT '[]',
@@ -91,7 +96,8 @@ class SQLiteStore:
                     sentiment    TEXT NOT NULL DEFAULT 'neutral',
                     focus_areas  TEXT NOT NULL DEFAULT '[]',
                     raw_file     TEXT NOT NULL,
-                    ingested_at  TEXT NOT NULL
+                    ingested_at  TEXT NOT NULL,
+                    PRIMARY KEY (date, sensitivity)
                 )
             """)
             conn.commit()
@@ -99,7 +105,8 @@ class SQLiteStore:
     def upsert(self, metadata: dict) -> None:
         """
         Insert or replace a metadata record.
-        Re-ingesting the same date cleanly overwrites the old record.
+        Composite key (date, sensitivity) ensures public and sensitive
+        records for the same date never collide.
         """
         with self._connect() as conn:
             conn.execute("""
@@ -121,11 +128,16 @@ class SQLiteStore:
             ))
             conn.commit()
 
-    def date_exists(self, date: str) -> bool:
-        """Check if a date has already been ingested."""
+    def date_exists(self, date: str, sensitivity: str) -> bool:
+        """
+        Check if a (date, sensitivity) pair has already been ingested.
+        Public and sensitive entries for the same date are independent.
+        """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT 1 FROM daily_summaries WHERE date = ?", (date,)
+                """SELECT 1 FROM daily_summaries
+                   WHERE date = ? AND sensitivity = ?""",
+                (date, sensitivity)
             ).fetchone()
             return row is not None
 
@@ -158,12 +170,17 @@ class ChromaStore:
     ) -> None:
         """
         Store chunks + embeddings in the correct collection.
-        Uses date + chunk index as document ID — safe to re-ingest.
+
+        Chunk IDs are prefixed with sensitivity to prevent collision
+        when public and sensitive entries share the same date.
+
+        Format: {sensitivity}_{date}_chunk_{index}
+        e.g.  : public_2026-02-23_chunk_0
+                sensitive_2026-02-23_chunk_0
         """
         collection_name = self.config.chroma_collection_for(metadata["sensitivity"])
         collection = self.client.get_or_create_collection(name=collection_name)
 
-        # Build per-chunk metadata (ChromaDB stores metadata per document)
         chunk_metadatas = [
             {
                 "date": metadata["date"],
@@ -171,15 +188,17 @@ class ChromaStore:
                 "sentiment": metadata["sentiment"],
                 "raw_file": metadata["raw_file"],
                 "chunk_index": i,
-                # Store as comma-separated strings — ChromaDB metadata is flat
                 "projects": ", ".join(metadata["projects"]),
                 "focus_areas": ", ".join(metadata["focus_areas"]),
             }
             for i in range(len(chunks))
         ]
 
-        # IDs are deterministic — re-ingesting same file overwrites cleanly
-        ids = [f"{metadata['date']}_chunk_{i}" for i in range(len(chunks))]
+        # sensitivity prefix prevents collision on same date
+        ids = [
+            f"{metadata['sensitivity']}_{metadata['date']}_chunk_{i}"
+            for i in range(len(chunks))
+        ]
 
         collection.upsert(
             ids=ids,
@@ -189,13 +208,19 @@ class ChromaStore:
         )
 
     def delete_by_date(self, date: str, sensitivity: str) -> None:
-        """Remove all chunks for a given date (used before re-ingestion)."""
+        """
+        Remove all chunks for a (date, sensitivity) pair.
+        Scoped by both fields to avoid deleting the wrong sensitivity
+        when re-ingesting one side of a same-date pair.
+        """
         collection_name = self.config.chroma_collection_for(sensitivity)
         try:
             collection = self.client.get_collection(name=collection_name)
-            collection.delete(where={"date": date})
+            collection.delete(
+                where={"date": date, "sensitivity": sensitivity}
+            )
         except Exception:
-            pass  # Collection doesn't exist yet — that's fine
+            pass  # Collection doesn't exist yet — fine
 
 
 # ── Embedder ──────────────────────────────────────────────────────────────────
@@ -267,9 +292,12 @@ class IngestPipeline:
 
         # ── Step 2: Store metadata in SQLite ──────────────────────────────────
         print("  [2/4] Storing metadata in SQLite...")
+        already_exists = self.sqlite.date_exists(
+            metadata["date"], metadata["sensitivity"]
+        )
         self.sqlite.upsert(metadata)
-        action = "updated" if self.sqlite.date_exists(metadata["date"]) else "inserted"
-        print(f"        Record {action} for date: {metadata['date']}")
+        action = "updated" if already_exists else "inserted"
+        print(f"        Record {action}: {metadata['date']} ({metadata['sensitivity']})")
 
         # ── Step 3: Chunk the markdown content ────────────────────────────────
         print("  [3/4] Chunking content...")
@@ -279,7 +307,6 @@ class IngestPipeline:
 
         # ── Step 4: Embed + store in ChromaDB ─────────────────────────────────
         print("  [4/4] Embedding and storing in ChromaDB...")
-        # Clean previous embeddings for this date first (idempotent)
         self.chroma.delete_by_date(metadata["date"], sensitivity)
         embeddings = self.embedder.embed_chunks(chunks)
         self.chroma.upsert_chunks(chunks, embeddings, metadata)
