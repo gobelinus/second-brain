@@ -58,6 +58,7 @@ Daily Summary:
 
 # ── Core Extractor ────────────────────────────────────────────────────────────
 
+
 class Structurer:
     """
     Extracts structured metadata from a markdown daily summary
@@ -131,6 +132,7 @@ class Structurer:
 
         # Fallback — warn but don't crash
         from datetime import date
+
         today = date.today().isoformat()
         print(
             f"  ⚠️  Filename '{file_path.name}' is not in YYYY-MM-DD format. "
@@ -168,10 +170,8 @@ class Structurer:
             return json.loads(cleaned)
         except json.JSONDecodeError as e:
             raise ValueError(
-                f"LLM returned invalid JSON.\n"
-                f"Error: {e}\n"
-                f"Raw response:\n{raw_text}"
-            )
+                f"LLM returned invalid JSON.\nError: {e}\nRaw response:\n{raw_text}"
+            ) from e
 
     def _validate_metadata(self, raw: dict) -> dict:
         """

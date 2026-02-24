@@ -12,11 +12,10 @@ human readable, version control friendly (public exports only).
 """
 
 import re
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 
 from brain.config import BrainConfig
-
 
 # ── Markdown Template ─────────────────────────────────────────────────────────
 
@@ -47,6 +46,7 @@ date_range: "{date_range}"
 
 
 # ── Exporter ──────────────────────────────────────────────────────────────────
+
 
 class Exporter:
     """
@@ -130,8 +130,7 @@ class Exporter:
     def _validate_sensitivity(self, sensitivity: str) -> None:
         if sensitivity not in ("public", "sensitive"):
             raise ValueError(
-                f"Invalid sensitivity '{sensitivity}'. "
-                f"Use 'public' or 'sensitive'."
+                f"Invalid sensitivity '{sensitivity}'. Use 'public' or 'sensitive'."
             )
 
     def _auto_title(
@@ -159,10 +158,10 @@ class Exporter:
         """
         # Lowercase, replace non-alphanumeric with hyphens
         slug = text.lower().strip()
-        slug = re.sub(r"[^\w\s-]", "", slug)       # remove special chars
-        slug = re.sub(r"[\s_]+", "-", slug)         # spaces to hyphens
-        slug = re.sub(r"-+", "-", slug)             # collapse multiple hyphens
-        slug = slug.strip("-")                       # trim leading/trailing hyphens
+        slug = re.sub(r"[^\w\s-]", "", slug)  # remove special chars
+        slug = re.sub(r"[\s_]+", "-", slug)  # spaces to hyphens
+        slug = re.sub(r"-+", "-", slug)  # collapse multiple hyphens
+        slug = slug.strip("-")  # trim leading/trailing hyphens
         # Truncate to keep filenames sane
         return slug[:50]
 

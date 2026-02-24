@@ -22,14 +22,14 @@ from datetime import datetime
 from pathlib import Path
 
 import chromadb
-from chromadb.config import Settings
 import ollama
+from chromadb.config import Settings
 
 from brain.config import BrainConfig
 from brain.structurer import Structurer
 
-
 # ── Text Chunker ──────────────────────────────────────────────────────────────
+
 
 class TextChunker:
     """
@@ -70,6 +70,7 @@ class TextChunker:
 
 # ── SQLite Store ──────────────────────────────────────────────────────────────
 
+
 class SQLiteStore:
     """
     Manages the SQLite metadata store.
@@ -109,23 +110,26 @@ class SQLiteStore:
         records for the same date never collide.
         """
         with self._connect() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO daily_summaries
                     (date, sensitivity, projects, blockers, people,
                      sentiment, focus_areas, raw_file, ingested_at)
                 VALUES
                     (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                metadata["date"],
-                metadata["sensitivity"],
-                json.dumps(metadata["projects"]),
-                json.dumps(metadata["blockers"]),
-                json.dumps(metadata["people"]),
-                metadata["sentiment"],
-                json.dumps(metadata["focus_areas"]),
-                metadata["raw_file"],
-                datetime.now().isoformat(),
-            ))
+            """,
+                (
+                    metadata["date"],
+                    metadata["sensitivity"],
+                    json.dumps(metadata["projects"]),
+                    json.dumps(metadata["blockers"]),
+                    json.dumps(metadata["people"]),
+                    metadata["sentiment"],
+                    json.dumps(metadata["focus_areas"]),
+                    metadata["raw_file"],
+                    datetime.now().isoformat(),
+                ),
+            )
             conn.commit()
 
     def date_exists(self, date: str, sensitivity: str) -> bool:
@@ -137,7 +141,7 @@ class SQLiteStore:
             row = conn.execute(
                 """SELECT 1 FROM daily_summaries
                    WHERE date = ? AND sensitivity = ?""",
-                (date, sensitivity)
+                (date, sensitivity),
             ).fetchone()
             return row is not None
 
@@ -146,6 +150,7 @@ class SQLiteStore:
 
 
 # ── ChromaDB Store ────────────────────────────────────────────────────────────
+
 
 class ChromaStore:
     """
@@ -216,14 +221,13 @@ class ChromaStore:
         collection_name = self.config.chroma_collection_for(sensitivity)
         try:
             collection = self.client.get_collection(name=collection_name)
-            collection.delete(
-                where={"date": date, "sensitivity": sensitivity}
-            )
+            collection.delete(where={"date": date, "sensitivity": sensitivity})
         except Exception:
             pass  # Collection doesn't exist yet — fine
 
 
 # ── Embedder ──────────────────────────────────────────────────────────────────
+
 
 class Embedder:
     """
@@ -246,6 +250,7 @@ class Embedder:
 
 
 # ── Ingestion Pipeline ────────────────────────────────────────────────────────
+
 
 class IngestPipeline:
     """
@@ -277,7 +282,7 @@ class IngestPipeline:
         """
         file_path = Path(file_path)
 
-        print(f"\n🧠 Brain Ingestion")
+        print("\n🧠 Brain Ingestion")
         print(f"   File       : {file_path}")
         print(f"   Sensitivity: {sensitivity}")
         print()
@@ -297,7 +302,9 @@ class IngestPipeline:
         )
         self.sqlite.upsert(metadata)
         action = "updated" if already_exists else "inserted"
-        print(f"        Record {action}: {metadata['date']} ({metadata['sensitivity']})")
+        print(
+            f"        Record {action}: {metadata['date']} ({metadata['sensitivity']})"
+        )
 
         # ── Step 3: Chunk the markdown content ────────────────────────────────
         print("  [3/4] Chunking content...")

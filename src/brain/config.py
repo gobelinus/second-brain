@@ -9,6 +9,7 @@ config.local.yaml values always win — machine-specific overrides only.
 """
 
 from pathlib import Path
+
 import yaml
 
 # ── Root of the project (two levels up from src/brain/) ──────────────────────
@@ -19,7 +20,7 @@ def _load_yaml(path: Path) -> dict:
     """Safely load a YAML file. Returns empty dict if file doesn't exist."""
     if not path.exists():
         return {}
-    with open(path, "r") as f:
+    with open(path) as f:
         return yaml.safe_load(f) or {}
 
 
@@ -30,11 +31,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
     """
     merged = base.copy()
     for key, value in override.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value
@@ -53,6 +50,7 @@ def load_config() -> dict:
 
 # ── Typed convenience accessors ───────────────────────────────────────────────
 # Keeps calling code clean: config.ollama_model() not config["ollama"]["model"]
+
 
 class BrainConfig:
     """
@@ -131,7 +129,9 @@ class BrainConfig:
         elif sensitivity == "sensitive":
             return self.sensitive_collection
         else:
-            raise ValueError(f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'.")
+            raise ValueError(
+                f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'."
+            )
 
     def exports_path_for(self, sensitivity: str) -> Path:
         """Return the correct exports directory for a given sensitivity."""
@@ -140,4 +140,6 @@ class BrainConfig:
         elif sensitivity == "sensitive":
             return self.sensitive_exports
         else:
-            raise ValueError(f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'.")
+            raise ValueError(
+                f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'."
+            )

@@ -12,7 +12,7 @@ Every output command supports --export to write a dated markdown file.
 
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -38,7 +38,7 @@ def _get_config() -> BrainConfig:
         return BrainConfig()
     except Exception as e:
         typer.echo(f"\n❌ Config error: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 def _print_header(command: str) -> None:
@@ -82,12 +82,14 @@ def _handle_export(
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+
 @app.command()
 def ingest(
     file: Annotated[
         Path,
         typer.Option(
-            "--file", "-f",
+            "--file",
+            "-f",
             help="Path to the daily markdown summary to ingest.",
             exists=True,
             readable=True,
@@ -96,7 +98,8 @@ def ingest(
     sensitivity: Annotated[
         str,
         typer.Option(
-            "--sensitivity", "-s",
+            "--sensitivity",
+            "-s",
             help="Sensitivity level: 'public' or 'sensitive'.",
         ),
     ] = "public",
@@ -124,8 +127,7 @@ def ingest(
     # ── Validate sensitivity early ────────────────────────────────────────────
     if sensitivity not in ("public", "sensitive"):
         typer.echo(
-            f"\n❌ Invalid sensitivity '{sensitivity}'. "
-            f"Use 'public' or 'sensitive'.",
+            f"\n❌ Invalid sensitivity '{sensitivity}'. Use 'public' or 'sensitive'.",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -138,15 +140,15 @@ def ingest(
 
     except FileNotFoundError as e:
         typer.echo(f"\n❌ File not found: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     except ValueError as e:
         typer.echo(f"\n❌ Ingestion error: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     except Exception as e:
         typer.echo(f"\n❌ Unexpected error during ingestion: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     # ── Optional export of ingestion report ───────────────────────────────────
     if export:
@@ -239,14 +241,14 @@ def trend(
         ),
     ],
     date_from: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--from",
             help="Start date (YYYY-MM-DD).",
         ),
     ] = None,
     date_to: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--to",
             help="End date (YYYY-MM-DD). Defaults to today.",
@@ -284,8 +286,7 @@ def trend(
     valid_fields = ["projects", "blockers", "sentiment", "focus_areas", "people"]
     if field not in valid_fields:
         typer.echo(
-            f"\n❌ Invalid field '{field}'. "
-            f"Choose from: {', '.join(valid_fields)}",
+            f"\n❌ Invalid field '{field}'. Choose from: {', '.join(valid_fields)}",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -312,7 +313,9 @@ def trend(
     typer.echo(stub_response)
 
     if export:
-        export_sensitivity = "public" if sensitivity in ("all", "public") else "sensitive"
+        export_sensitivity = (
+            "public" if sensitivity in ("all", "public") else "sensitive"
+        )
         exporter = Exporter(_get_config())
         _handle_export(
             content=stub_response,
@@ -378,6 +381,7 @@ def summarize(
     # ── Basic date validation ─────────────────────────────────────────────────
     try:
         from datetime import datetime
+
         start = datetime.strptime(date_from, "%Y-%m-%d")
         end = datetime.strptime(date_to, "%Y-%m-%d")
         if end < start:
@@ -386,12 +390,12 @@ def summarize(
                 err=True,
             )
             raise typer.Exit(code=1)
-    except ValueError:
+    except ValueError as e:
         typer.echo(
             "\n❌ Invalid date format. Use YYYY-MM-DD.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     # ── Phase 3 stub ──────────────────────────────────────────────────────────
     stub_response = (
@@ -423,6 +427,7 @@ def summarize(
 
 # ── Utility Commands ──────────────────────────────────────────────────────────
 
+
 @app.command()
 def status() -> None:
     """
@@ -433,6 +438,7 @@ def status() -> None:
         brain status
     """
     import sqlite3
+
     import chromadb
     from chromadb.config import Settings
 
@@ -450,18 +456,14 @@ def status() -> None:
     if cfg.sqlite_db.exists():
         try:
             conn = sqlite3.connect(cfg.sqlite_db)
-            total = conn.execute(
-                "SELECT COUNT(*) FROM daily_summaries"
-            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM daily_summaries").fetchone()[0]
             public = conn.execute(
                 "SELECT COUNT(*) FROM daily_summaries WHERE sensitivity='public'"
             ).fetchone()[0]
             sensitive = conn.execute(
                 "SELECT COUNT(*) FROM daily_summaries WHERE sensitivity='sensitive'"
             ).fetchone()[0]
-            latest = conn.execute(
-                "SELECT MAX(date) FROM daily_summaries"
-            ).fetchone()[0]
+            latest = conn.execute("SELECT MAX(date) FROM daily_summaries").fetchone()[0]
             conn.close()
             typer.echo(f"   Total entries  : {total}")
             typer.echo(f"   Public entries : {public}")
@@ -496,6 +498,7 @@ def status() -> None:
 
 # ── Private Helpers ───────────────────────────────────────────────────────────
 
+
 def _build_ingest_report(metadata: dict) -> str:
     """Build a markdown ingestion report from metadata."""
     projects = "\n".join(f"- {p}" for p in metadata["projects"]) or "- none"
@@ -504,14 +507,14 @@ def _build_ingest_report(metadata: dict) -> str:
     focus = "\n".join(f"- {f}" for f in metadata["focus_areas"]) or "- none"
 
     return f"""\
-## Ingestion Report — {metadata['date']}
+## Ingestion Report — {metadata["date"]}
 
 | Field | Value |
 |---|---|
-| Date | {metadata['date']} |
-| Sensitivity | {metadata['sensitivity']} |
-| Sentiment | {metadata['sentiment']} |
-| Source | {metadata['raw_file']} |
+| Date | {metadata["date"]} |
+| Sensitivity | {metadata["sensitivity"]} |
+| Sentiment | {metadata["sentiment"]} |
+| Source | {metadata["raw_file"]} |
 
 ### Projects
 {projects}
