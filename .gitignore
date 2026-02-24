@@ -240,3 +240,14 @@ __pycache__/
 # ── OS noise ──────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# --- Phase 1b additions ------------------------------------------------------
+
+# Raw daily input files (pre-compose, may contain sensitive data)
+inputs/
+
+# macOS launchd plist — contains local username + absolute paths
+launchd/
+
+# Auto-generated daily reminder checklists — local only, not useful in git
+exports/reminders/

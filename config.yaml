@@ -1,28 +1,246 @@
+# =============================================================================
+# Brain Project — config.yaml
+# All settings live here. No hardcoded values in source code.
+# Machine-specific overrides: config.local.yaml (git ignored)
+# Secrets: .env (git ignored)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Paths — all relative to project root
+# -----------------------------------------------------------------------------
+paths:
+  daily_public: "daily/public"
+  daily_sensitive: "daily/sensitive"
+  inputs: "inputs"
+  inputs_archive: "inputs/archive"
+  exports_public: "exports/public"
+  exports_sensitive: "exports/sensitive"
+  exports_reminders: "exports/reminders"
+  store_chroma: "store/chroma"
+  store_sqlite: "store/brain.db"
+  launchd: "launchd"
+
+# -----------------------------------------------------------------------------
+# Ollama / LLM settings
+# -----------------------------------------------------------------------------
 ollama:
   base_url: "http://localhost:11434"
-  llm_model: "mistral"
+  llm_model: "mistral:latest"
   embed_model: "nomic-embed-text"
+  temperature: 0          # deterministic for structured extraction
+  timeout_seconds: 120
 
-paths:
-  public_daily: "daily/public"
-  sensitive_daily: "daily/sensitive"
-  public_exports: "exports/public"
-  sensitive_exports: "exports/sensitive"
-  chroma_store: "store/chroma"
-  sqlite_db: "store/brain.db"
+# -----------------------------------------------------------------------------
+# ChromaDB settings
+# -----------------------------------------------------------------------------
+chroma:
+  collections:
+    public: "brain_public"
+    sensitive: "brain_sensitive"
 
-ingestion:
-  chunk_size: 500
-  chunk_overlap: 50
+# -----------------------------------------------------------------------------
+# Ingestion / chunking settings
+# -----------------------------------------------------------------------------
+ingest:
+  chunk_size_words: 500
+  chunk_overlap_words: 50
+  default_sensitivity: "public"
 
+# -----------------------------------------------------------------------------
+# Structured metadata — enforced sentiment values
+# -----------------------------------------------------------------------------
 metadata:
-  sentiment_options:
+  valid_sentiments:
     - productive
     - frustrated
     - neutral
     - overwhelmed
     - energized
+  default_sentiment: "neutral"
 
-chroma:
-  public_collection: "public_brain"
-  sensitive_collection: "sensitive_brain"
+# -----------------------------------------------------------------------------
+# Exporter settings
+# -----------------------------------------------------------------------------
+exporter:
+  date_format: "%Y-%m-%d"
+  filename_collision_max: 99
+
+# -----------------------------------------------------------------------------
+# Scanner — config-driven public summary safety check
+#
+# Evaluation order (enforced by scan_public_summaries.py):
+#   1. allowlist  → if match → SKIP (safe, stop checking)
+#   2. private_domains → if match → BLOCK (severity: critical)
+#   3. blocklist  → if match → check severity:
+#        critical / high  → BLOCK commit
+#        warning          → LOG only, allow commit
+# -----------------------------------------------------------------------------
+scanner:
+  # Patterns that are explicitly safe — checked FIRST, stop further checks.
+  # Use these for technical terms that look like domains but aren't sensitive.
+  allowlist:
+    - "localhost"
+    - "127.0.0.1"
+    - "example.com"
+    - "github.com"
+    - "pypi.org"
+    - "ollama.ai"
+    - "chromadb.com"
+
+  # Private domains — always CRITICAL, always block commit.
+  # Replace these placeholders with your actual internal domains.
+  private_domains:
+    - pattern: "corp\\.internal"
+      description: "Internal corporate domain"
+    - pattern: "company\\.slack\\.com"
+      description: "Internal Slack workspace"
+    - pattern: "internal\\.atlassian\\.net"
+      description: "Internal Jira/Confluence"
+    - pattern: "[a-z0-9-]+\\.corp\\.[a-z]+"
+      description: "Generic corp subdomain pattern"
+
+  # Blocklist — ordered list of patterns with severity levels.
+  # severity: critical | high | warning
+  blocklist:
+    - pattern: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\b"
+      description: "Full name (FirstName LastName)"
+      severity: "warning"
+      note: "Review — may be a public figure or tech term"
+
+    - pattern: "\\b\\d{3}[-.]\\d{3}[-.]\\d{4}\\b"
+      description: "Phone number pattern"
+      severity: "critical"
+
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+      description: "Email address"
+      severity: "critical"
+
+    - pattern: "password\\s*[:=]"
+      description: "Inline password assignment"
+      severity: "critical"
+
+    - pattern: "api[_-]?key\\s*[:=]"
+      description: "API key assignment"
+      severity: "critical"
+
+    - pattern: "\\bconfidential\\b"
+      description: "Confidential label"
+      severity: "high"
+      note: "Review before committing to public"
+
+    - pattern: "\\bproprietary\\b"
+      description: "Proprietary label"
+      severity: "high"
+
+    - pattern: "\\bsalary\\b|\\bcompensation\\b|\\bbonus\\b"
+      description: "Compensation terms"
+      severity: "high"
+
+    - pattern: "\\bperformance review\\b|\\bPIP\\b"
+      description: "HR / performance process terms"
+      severity: "warning"
+
+# -----------------------------------------------------------------------------
+# Composer — daily summary combiner
+#
+# brain compose --date YYYY-MM-DD [--ingest]
+#   1. Reads all files from inputs/YYYY-MM-DD/
+#   2. Combines via LLM into structured sensitive summary
+#   3. Writes to daily/sensitive/YYYY-MM-DD.md
+#   4. Archives inputs to inputs/archive/YYYY-MM-DD/
+#   5. Optionally triggers brain ingest --sensitivity sensitive
+# -----------------------------------------------------------------------------
+composer:
+  # Output always goes to daily/sensitive/ — composer output is always sensitive
+  output_sensitivity: "sensitive"
+
+  # Supported input file extensions (others are ignored)
+  input_extensions:
+    - ".md"
+    - ".txt"
+
+  # Archive processed inputs after successful compose
+  archive_after_compose: true
+
+  # LLM prompt template — {date} and {content} are injected at runtime
+  prompt_template: |
+    You are a personal knowledge assistant. Combine the following daily activity
+    notes into a single, well-structured markdown summary for {date}.
+
+    Follow EXACTLY this structure:
+    # Daily Summary — {date} (Sensitive)
+
+    ## Focus Areas
+    [Bullet list of main focus areas]
+
+    ## Projects
+    [Bullet list of projects worked on]
+
+    ## Meetings
+    [Bullet list of meetings attended, with brief context]
+
+    ## Blockers
+    [Bullet list of blockers or impediments. Write "None" if none.]
+
+    ## People / Teams
+    [Bullet list of people or teams interacted with]
+
+    ## Mood
+    [Single word — MUST be one of: productive, frustrated, neutral, overwhelmed, energized]
+    [One sentence explaining why]
+
+    ## References
+    [Any links, tickets, or references mentioned]
+
+    ---
+    SOURCE NOTES:
+    {content}
+
+    Rules:
+    - Do not invent information not present in the source notes.
+    - Preserve all technical details, ticket numbers, and names exactly.
+    - Output only the markdown. No preamble, no commentary.
+
+# -----------------------------------------------------------------------------
+# Reminder — daily morning notification
+#
+# brain remind             → send reminder now (test mode)
+# brain remind --install   → generate + load launchd plist
+# brain remind --uninstall → unload + remove plist
+# brain remind --status    → show schedule + last run info
+# -----------------------------------------------------------------------------
+reminder:
+  # Trigger time for launchd (24h format)
+  schedule:
+    hour: 9
+    minute: 0
+
+  # macOS notification content (sent via osascript)
+  notification:
+    title: "🧠 Brain — Daily Summary"
+    message: "Drop your notes in inputs/{date}/ and run: brain compose --date {date} --ingest"
+    sound: "default"   # macOS sound name, or "default"
+
+  # Launchd plist label (used as the plist filename too)
+  launchd_label: "com.brain.reminder"
+
+  # Reminder markdown checklist template
+  # {date} and {yesterday} are injected at runtime
+  checklist_template: |
+    # 🧠 Daily Brain Reminder — {date}
+
+    **Generated at:** {timestamp}
+
+    ## Today's Checklist
+
+    - [ ] Drop notes into `inputs/{date}/`
+    - [ ] Run `brain compose --date {date} --ingest`
+    - [ ] Review `daily/sensitive/{date}.md` for accuracy
+    - [ ] Commit public summary: `git add daily/public/{date}.md && git commit`
+
+    ## Yesterday's Status
+
+    {yesterday_status}
+
+    ---
+    *This file is auto-generated. Safe to delete after use.*
