@@ -19,6 +19,8 @@ paths:
   store_chroma: "store/chroma"
   store_sqlite: "store/brain.db"
   launchd: "launchd"
+  todo_txt: "todo.txt"                  # rolling todo.txt at project root
+  exports_todos: "exports/todos"        # git ignored, dated per-day backups (future)
 
 # -----------------------------------------------------------------------------
 # Ollama / LLM settings
@@ -141,9 +143,10 @@ scanner:
 # brain compose --date YYYY-MM-DD [--ingest]
 #   1. Reads all files from inputs/YYYY-MM-DD/
 #   2. Combines via LLM into structured sensitive summary
-#   3. Writes to daily/sensitive/YYYY-MM-DD.md
-#   4. Archives inputs to inputs/archive/YYYY-MM-DD/
-#   5. Optionally triggers brain ingest --sensitivity sensitive
+#   3. Extracts action items into todo.txt (todo.txt format)
+#   4. Writes to daily/sensitive/YYYY-MM-DD.md
+#   5. Archives inputs to inputs/archive/YYYY-MM-DD/
+#   6. Optionally triggers brain ingest --sensitivity sensitive
 # -----------------------------------------------------------------------------
 composer:
   # Output always goes to daily/sensitive/ — composer output is always sensitive
@@ -159,23 +162,36 @@ composer:
 
   # LLM prompt template — {date} and {content} are injected at runtime
   prompt_template: |
-    You are a personal knowledge assistant. Combine the following daily activity
-    notes into a single, well-structured markdown summary for {date}.
+    You are a personal knowledge assistant. You will receive one or more daily
+    notes files for {date}. One file is a structured AI-generated daily summary.
+    Other files may include meeting notes, standup notes, or ad-hoc notes.
 
-    Follow EXACTLY this structure:
+    Your job is to MERGE all sources into a single enriched summary.
+    - The AI summary is the base — preserve all its content
+    - Supplementary files (meeting notes etc) should ENRICH the base:
+      merge their Key Takeaways, action context, and decisions into the
+      appropriate sections
+    - Do not duplicate content that already exists in the AI summary
+    - Do not lose content that only appears in supplementary files
+
+    Output EXACTLY this structure:
     # Daily Summary — {date} (Sensitive)
 
     ## Focus Areas
-    [Bullet list of main focus areas]
+    [Bullet list of main focus areas — merged from all sources]
 
     ## Projects
-    [Bullet list of projects worked on]
+    [Bullet list of projects worked on — merged from all sources]
+
+    ## Key Takeaways
+    [Bullet list of the most important insights, decisions, and observations
+     from today — merged from ALL sources including meeting notes]
 
     ## Meetings
-    [Bullet list of meetings attended, with brief context]
+    [Bullet list of meetings attended with brief context]
 
     ## Blockers
-    [Bullet list of blockers or impediments. Write "None" if none.]
+    [Bullet list of concrete blockers. Write "None" if none.]
 
     ## People / Teams
     [Bullet list of people or teams interacted with]
@@ -185,16 +201,49 @@ composer:
     [One sentence explaining why]
 
     ## References
-    [Any links, tickets, or references mentioned]
+    [Real URLs and ticket numbers only — Jira, Confluence, PRs, Slack threads.
+     Do NOT include file names, tool notices, or "meeting assets ready" messages.]
 
     ---
     SOURCE NOTES:
     {content}
 
     Rules:
-    - Do not invent information not present in the source notes.
-    - Preserve all technical details, ticket numbers, and names exactly.
+    - Preserve all technical details, ticket numbers, and names exactly
+    - Key Takeaways must include insights from meeting notes files — do not skip them
+    - Merge duplicate information — do not repeat the same point twice
+    - Ignore file metadata lines and tool-generated footers in References
     - Output only the markdown. No preamble, no commentary.
+
+  # todo.txt extraction prompt — {date} and {content} are injected at runtime
+  todo_prompt_template: |
+    You are a precise action item extractor. Extract all action items from the
+    following daily notes for {date} and format them in todo.txt format.
+
+    todo.txt format rules:
+    - One action item per line
+    - Start with priority: (A), (B), or (C)
+        (A) = urgent / blocking / due today
+        (B) = important / should be done soon
+        (C) = nice to have / low urgency
+    - Follow with creation date: {date}
+    - Then the action item description
+    - Add +Project tag if a project is identifiable (no spaces, CamelCase)
+    - Add @context tag for context: @infra @team @review @comms @code
+
+    Example output:
+    (A) {date} Fix hotfix approval request for kkumar +Anvil @review
+    (B) {date} Reduce Prod0 instances to 20 and monitor performance +Autoscaling @infra
+    (C) {date} Post daily auto-scaling summary to channel +Autoscaling @comms
+
+    Rules:
+    - Extract ONLY concrete action items — things someone must DO
+    - Do not extract observations, decisions, or status updates
+    - Do not invent items not present in the notes
+    - Output ONLY the todo.txt lines. No preamble, no headers, no commentary.
+
+    SOURCE NOTES:
+    {content}
 
 # -----------------------------------------------------------------------------
 # Reminder — daily morning notification

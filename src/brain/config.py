@@ -253,6 +253,22 @@ class BrainConfig:
             return self.daily_sensitive / f"{date}.md"
         return self.daily_public / f"{date}.md"
 
+    # Add these two properties to BrainConfig, inside the # ── Composer ── section
+    # Place them after composer_output_path()
+
+    @property
+    def composer_todo_prompt_template(self) -> str:
+        """
+        LLM prompt template for extracting action items into todo.txt format.
+        Placeholders injected at runtime: {date}, {content}
+        """
+        return self._cfg.get("composer", {}).get("todo_prompt_template", "")
+
+    @property
+    def todo_txt(self) -> Path:
+        """Path to the rolling todo.txt file at project root."""
+        return ROOT / self._cfg["paths"].get("todo_txt", "todo.txt")
+
     # ── Reminder ──────────────────────────────────────────────────────────────
 
     @property

@@ -251,3 +251,4 @@ launchd/
 
 # Auto-generated daily reminder checklists — local only, not useful in git
 exports/reminders/
+todo.txt

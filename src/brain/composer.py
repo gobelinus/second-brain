@@ -68,40 +68,59 @@ class Composer:
         print()
 
         # ── Step 1: Collect input files ───────────────────────────────────────
-        print("  [1/4] Collecting input files...")
+        print("  [1/5] Collecting input files...")
         input_files = self._collect_inputs(inputs_path)
         for f in input_files:
             print(f"        + {f.name}")
 
         # ── Step 2: Read and concatenate content ──────────────────────────────
-        print("  [2/4] Reading input content...")
+        print("  [2/5] Reading input content...")
         combined_content = self._read_inputs(input_files)
         word_count = len(combined_content.split())
         print(f"        {len(input_files)} file(s), ~{word_count} words total")
 
         # ── Step 3: Call LLM to compose structured summary ────────────────────
-        print("  [3/4] Composing summary via LLM...")
+        print("  [3/5] Composing summary via LLM...")
         composed = self._call_llm(date, combined_content)
         print(f"        Output: ~{len(composed.split())} words")
 
+        # ── Step 4: Extract action items into todo.txt ────────────────────────
+        print("  [4/5] Extracting action items...")
+        todo_items = self._extract_todos(date, combined_content)
+        if todo_items:
+            print(f"        {len(todo_items)} action item(s) found")
+        else:
+            print("        No action items found")
+
         if dry_run:
             print()
-            print("  [DRY RUN] Output preview:")
+            print("  [DRY RUN] Summary preview:")
             print("  " + "─" * 58)
             print(composed)
             print("  " + "─" * 58)
+            if todo_items:
+                print()
+                print("  [DRY RUN] Action items preview:")
+                print("  " + "─" * 58)
+                for item in todo_items:
+                    print(f"  {item}")
+                print("  " + "─" * 58)
             print("  [DRY RUN] No files written or archived.")
             return output_path
 
-        # ── Step 4: Write output + optionally archive inputs ──────────────────
-        print("  [4/4] Writing output file...")
+        # ── Step 5: Write output + append todos + optionally archive ──────────
+        print("  [5/5] Writing output files...")
         self._write_output(output_path, composed)
-        print(f"        Written: {output_path}")
+        print(f"        Summary  : {output_path}")
+
+        if todo_items:
+            todo_path = self._append_todos(date, todo_items)
+            print(f"        Todos    : {todo_path} (+{len(todo_items)} items)")
 
         if self.config.composer_archive_after_compose:
             archive_path = self.config.composer_archive_path(date)
             self._archive_inputs(inputs_path, archive_path)
-            print(f"        Archived inputs to: {archive_path}")
+            print(f"        Archived : {archive_path}")
 
         print()
         print("  ✅ Compose complete")
@@ -206,6 +225,63 @@ class Composer:
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(content, encoding="utf-8")
+
+    # ── New private method — add after _write_output() ────────────────────────────
+    def _extract_todos(self, date: str, content: str) -> list[str]:
+        """
+        Call LLM to extract action items from input content in todo.txt format.
+        Returns a list of todo.txt lines, empty list if none found or no template.
+
+        Fails softly — a todo extraction failure should never block the summary.
+        """
+        prompt_template = self.config.composer_todo_prompt_template
+        if not prompt_template:
+            return []
+
+        prompt = prompt_template.format(date=date, content=content)
+
+        try:
+            response = ollama.chat(
+                model=self.config.ollama_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0},
+            )
+            raw = response["message"]["content"].strip()
+
+            # Parse into individual lines, filter blank lines and commentary
+            lines = [
+                line.strip()
+                for line in raw.splitlines()
+                if line.strip() and line.strip().startswith("(")
+            ]
+            return lines
+
+        except Exception as e:
+            print(f"  ⚠️  Todo extraction failed (non-blocking): {e}")
+            return []
+
+    def _append_todos(self, date: str, todo_items: list[str]) -> Path:
+        """
+        Append extracted todo items to the rolling todo.txt file.
+        Adds a date separator comment before each day's items so the file
+        remains readable and greppable.
+
+        Format:
+            # 2026-02-24
+            (A) 2026-02-24 Fix hotfix approval +Anvil @review
+            (B) 2026-02-24 Reduce Prod0 instances +Autoscaling @infra
+        """
+        todo_path = self.config.todo_txt
+        todo_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build the block to append
+        separator = f"\n# {date}\n"
+        block = separator + "\n".join(todo_items) + "\n"
+
+        with open(todo_path, "a", encoding="utf-8") as f:
+            f.write(block)
+
+        return todo_path
 
     def _archive_inputs(self, inputs_path: Path, archive_path: Path) -> None:
         """
