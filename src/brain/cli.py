@@ -138,7 +138,7 @@ def ingest(
 
     try:
         pipeline = IngestPipeline(cfg)
-        metadata = pipeline.run(file_path=file, sensitivity=sensitivity)
+        metadata = pipeline.route(file_path=file, sensitivity=sensitivity)
 
     except FileNotFoundError as e:
         typer.echo(f"\n❌ File not found: {e}", err=True)
@@ -232,7 +232,7 @@ def compose(
         typer.echo("\n🔄 Auto-ingesting composed summary...")
         try:
             pipeline = IngestPipeline(cfg)
-            pipeline.run(file_path=output_path, sensitivity="sensitive")
+            pipeline.route(file_path=output_path, sensitivity="sensitive")
         except Exception as e:
             typer.echo(f"\n⚠️  Ingest failed after compose: {e}", err=True)
             typer.echo(
@@ -632,7 +632,12 @@ def status() -> None:
                 path=str(cfg.chroma_store),
                 settings=Settings(anonymized_telemetry=False),
             )
-            for name in (cfg.public_collection, cfg.sensitive_collection):
+            for name in (
+                cfg.public_collection,
+                cfg.sensitive_collection,
+                cfg.blog_public_collection,
+                cfg.blog_sensitive_collection,
+            ):
                 try:
                     col = client.get_collection(name)
                     typer.echo(f"   {name}: {col.count()} chunks")

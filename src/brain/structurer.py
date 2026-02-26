@@ -159,12 +159,27 @@ class Structurer:
     def _parse_json(self, raw_text: str) -> dict:
         """
         Safely parse LLM JSON response.
-        Handles cases where the model wraps output in markdown fences.
+        Handles three common LLM response patterns:
+          1. Clean JSON — {"key": "value"}
+          2. Fenced JSON — ```json\n{"key": "value"}\n```
+          3. Prose + fenced JSON — "Here is the JSON:\n```\n{...}\n```"
         """
-        # Strip markdown code fences if present
-        cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.MULTILINE)
-        cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.MULTILINE)
-        cleaned = cleaned.strip()
+        # Pattern 3 — extract content inside first code fence block
+        # Handles both ```json and ``` openers
+        fence_match = re.search(
+            r"```(?:json)?\s*\n?(.*?)\n?```",
+            raw_text,
+            re.DOTALL,
+        )
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
+        else:
+            # Pattern 1 — strip any prose before the first {
+            brace_start = raw_text.find("{")
+            if brace_start != -1:
+                cleaned = raw_text[brace_start:]
+            else:
+                cleaned = raw_text.strip()
 
         try:
             return json.loads(cleaned)

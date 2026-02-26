@@ -166,6 +166,12 @@ composer:
 
   # LLM prompt template — {date} and {content} are injected at runtime
   prompt_template: |
+    IMPORTANT: Your response MUST start with exactly this line:
+    # Daily Summary — {date} (Sensitive)
+
+    Do not write any preamble, explanation, or prose before this header.
+    Start your response with the # heading immediately.
+
     You are a personal knowledge assistant. You will receive one or more daily
     notes files for {date}. One file is a structured AI-generated daily summary.
     Other files may include meeting notes, standup notes, or ad-hoc notes.

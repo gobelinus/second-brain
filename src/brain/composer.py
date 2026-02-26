@@ -187,10 +187,12 @@ class Composer:
     def _call_llm(self, date: str, content: str) -> str:
         """
         Call local Ollama LLM with the compose prompt from config.
+        Retries once if the LLM ignores the format template.
         Returns the composed markdown string.
 
         Raises:
-            ValueError: If the LLM returns an empty response.
+            ValueError: If the LLM returns an empty or malformed response
+                        after all retries.
         """
         prompt_template = self.config.composer_prompt_template
         if not prompt_template:
@@ -200,30 +202,51 @@ class Composer:
             )
 
         prompt = prompt_template.format(date=date, content=content)
+        max_attempts = 2
 
-        response = ollama.chat(
-            model=self.config.ollama_llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": self.config.ollama_temperature},
-        )
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                print(f"  ⚠️  Retrying LLM call (attempt {attempt}/{max_attempts})...")
 
-        result = response["message"]["content"].strip()
-
-        if not result:
-            raise ValueError(
-                "LLM returned an empty response. "
-                "Check that Ollama is running and the model is available:\n"
-                f"  ollama run {self.config.ollama_llm_model}"
+            response = ollama.chat(
+                model=self.config.ollama_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": self.config.ollama_temperature},
             )
 
-        self._validate_structure(result, date)
-        return result
+            result = response["message"]["content"].strip()
 
-    # Expected section headings in the composed output.
-    # If the LLM skips or renames these, we catch it before writing to disk.
+            if not result:
+                if attempt == max_attempts:
+                    raise ValueError(
+                        "LLM returned an empty response. "
+                        "Check that Ollama is running and the model is available:\n"
+                        f"  ollama run {self.config.ollama_llm_model}"
+                    )
+                continue
+
+            # Strip accidental markdown fences wrapping the whole output
+            # e.g. ```markdown\n# Daily Summary...\n```
+            if result.startswith("```"):
+                result = re.sub(r"^```[a-z]*\n?", "", result)
+                result = re.sub(r"\n?```$", "", result)
+                result = result.strip()
+
+            try:
+                self._validate_structure(result, date)
+                return result  # ✅ valid — return immediately
+            except ValueError:
+                if attempt == max_attempts:
+                    raise  # re-raise original error after all retries exhausted
+                # otherwise loop and retry
+
+        # Should never reach here
+        raise ValueError("LLM compose failed after all retries.")
+
     _REQUIRED_SECTIONS = [
         "## Focus Areas",
         "## Projects",
+        "## Key Takeaways",
         "## Meetings",
         "## Blockers",
         "## People / Teams",
