@@ -10,7 +10,6 @@ Built with Typer. Exposes clean, memorable commands:
 Every output command supports --export to write a dated markdown file.
 """
 
-from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -21,6 +20,7 @@ from brain.config import BrainConfig
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
 from brain.reminder import Reminder
+from brain.trend import TrendEngine, TrendFormatter
 
 # ── App Setup ─────────────────────────────────────────────────────────────────
 
@@ -394,14 +394,14 @@ def trend(
         str | None,
         typer.Option(
             "--from",
-            help="Start date (YYYY-MM-DD).",
+            help="Start date inclusive (YYYY-MM-DD).",
         ),
     ] = None,
     date_to: Annotated[
         str | None,
         typer.Option(
             "--to",
-            help="End date (YYYY-MM-DD). Defaults to today.",
+            help="End date inclusive (YYYY-MM-DD). Defaults to today.",
         ),
     ] = None,
     sensitivity: Annotated[
@@ -422,13 +422,15 @@ def trend(
     """
     **Trend** analysis on structured metadata fields via SQLite.
 
-    *(Full implementation in Phase 2 — stub active)*
-
     Examples:
 
-        brain trend --field projects --from 2026-01-01 --to 2026-01-31
+        brain trend --field projects
 
-        brain trend --field sentiment --from 2026-02-01 --export
+        brain trend --field sentiment --from 2026-02-01
+
+        brain trend --field blockers --from 2026-01-01 --to 2026-01-31 --sensitivity sensitive
+
+        brain trend --field focus_areas --export
     """
     _print_header("Trend Analysis")
 
@@ -441,8 +443,18 @@ def trend(
         )
         raise typer.Exit(code=1)
 
+    # ── Validate sensitivity ──────────────────────────────────────────────────
+    if sensitivity not in ("public", "sensitive", "all"):
+        typer.echo(
+            f"\n❌ Invalid sensitivity '{sensitivity}'. Use 'public', 'sensitive', or 'all'.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     # ── Default date_to to today ──────────────────────────────────────────────
-    date_to = date_to or date.today().isoformat()
+    from datetime import date as date_type
+
+    date_to = date_to or date_type.today().isoformat()
 
     typer.echo(f"   Field      : {field}")
     typer.echo(f"   From       : {date_from or 'beginning'}")
@@ -450,25 +462,38 @@ def trend(
     typer.echo(f"   Sensitivity: {sensitivity}")
     typer.echo()
 
-    # ── Phase 2 stub ──────────────────────────────────────────────────────────
-    stub_response = (
-        f"🚧 Trend analysis coming in Phase 2.\n\n"
-        f"**Field:** {field}\n"
-        f"**From:** {date_from or 'beginning'}\n"
-        f"**To:** {date_to}\n"
-        f"**Sensitivity:** {sensitivity}\n\n"
-        f"SQLite aggregation queries will power this command in Phase 2."
-    )
+    cfg = _get_config()
 
-    typer.echo(stub_response)
+    try:
+        engine = TrendEngine(cfg)
+        result = engine.query(
+            field=field,
+            date_from=date_from,
+            date_to=date_to,
+            sensitivity=sensitivity,
+        )
 
+    except ValueError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error during trend query: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # ── Format and display ────────────────────────────────────────────────────
+    formatter = TrendFormatter()
+    output = formatter.format(result)
+    typer.echo(output)
+
+    # ── Optional export ───────────────────────────────────────────────────────
     if export:
         export_sensitivity = (
             "public" if sensitivity in ("all", "public") else "sensitive"
         )
-        exporter = Exporter(_get_config())
+        exporter = Exporter(cfg)
         _handle_export(
-            content=stub_response,
+            content=output,
             command="trend",
             sensitivity=export_sensitivity,
             exporter=exporter,
@@ -477,7 +502,7 @@ def trend(
             date_to=date_to,
         )
 
-    typer.echo()
+    typer.echo("\n✅ Done.\n")
 
 
 @app.command()
