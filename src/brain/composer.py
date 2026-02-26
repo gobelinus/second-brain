@@ -216,7 +216,55 @@ class Composer:
                 f"  ollama run {self.config.ollama_llm_model}"
             )
 
+        self._validate_structure(result, date)
         return result
+
+    # Expected section headings in the composed output.
+    # If the LLM skips or renames these, we catch it before writing to disk.
+    _REQUIRED_SECTIONS = [
+        "## Focus Areas",
+        "## Projects",
+        "## Meetings",
+        "## Blockers",
+        "## People / Teams",
+        "## Mood",
+        "## References",
+    ]
+
+    def _validate_structure(self, result: str, date: str) -> None:
+        """
+        Validate that the LLM output follows the required section structure.
+
+        Checks:
+          1. Output starts with the correct H1 header (not prose)
+          2. All required ## sections are present
+
+        Raises:
+            ValueError: With a clear diagnostic if structure is wrong.
+        """
+        expected_header = f"# Daily Summary — {date} (Sensitive)"
+
+        # Check H1 header — most reliable signal that the LLM followed the format
+        if not result.startswith(expected_header):
+            first_line = result.splitlines()[0] if result else "(empty)"
+            raise ValueError(
+                f"LLM output does not follow the required structure.\n\n"
+                f"  Expected first line : {expected_header!r}\n"
+                f"  Got first line      : {first_line!r}\n\n"
+                f"The model likely ignored the format template and wrote prose.\n"
+                f"Try: (1) Update the prompt in config.yaml  "
+                f"(2) Switch to a larger model via config.local.yaml\n"
+                f"     ollama_llm_model: llama3"
+            )
+
+        # Check all required sections are present
+        missing = [s for s in self._REQUIRED_SECTIONS if s not in result]
+        if missing:
+            raise ValueError(
+                "LLM output is missing required sections:\n"
+                + "\n".join(f"  - {s}" for s in missing)
+                + f"\n\nRaw output preview (first 300 chars):\n{result}"
+            )
 
     def _write_output(self, output_path: Path, content: str) -> None:
         """

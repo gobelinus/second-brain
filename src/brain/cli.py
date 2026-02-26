@@ -16,9 +16,11 @@ from typing import Annotated
 
 import typer
 
+from brain.composer import Composer
 from brain.config import BrainConfig
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
+from brain.reminder import Reminder
 
 # ── App Setup ─────────────────────────────────────────────────────────────────
 
@@ -161,6 +163,154 @@ def ingest(
             exporter=exporter,
             title=f"Ingestion Report — {metadata['date']}",
         )
+
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def compose(
+    date: Annotated[
+        str,
+        typer.Option(
+            "--date",
+            "-d",
+            help="Date to compose summary for (YYYY-MM-DD).",
+        ),
+    ],
+    ingest: Annotated[
+        bool,
+        typer.Option(
+            "--ingest",
+            help="Automatically ingest the composed summary after writing.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview LLM output without writing or archiving files.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Compose** a structured daily summary from input files.
+
+    Reads all files from inputs/YYYY-MM-DD/, combines them via local LLM,
+    writes to daily/sensitive/YYYY-MM-DD.md, extracts action items to todo.txt,
+    and archives inputs.
+
+    Examples:
+
+        brain compose --date 2026-02-24
+
+        brain compose --date 2026-02-24 --ingest
+
+        brain compose --date 2026-02-24 --dry-run
+    """
+    _print_header("Daily Summary Composer")
+
+    cfg = _get_config()
+
+    try:
+        composer = Composer(cfg)
+        output_path = composer.compose(date=date, dry_run=dry_run)
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except ValueError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error during compose: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # ── Optional auto-ingest ──────────────────────────────────────────────────
+    if ingest and not dry_run:
+        typer.echo("\n🔄 Auto-ingesting composed summary...")
+        try:
+            pipeline = IngestPipeline(cfg)
+            pipeline.run(file_path=output_path, sensitivity="sensitive")
+        except Exception as e:
+            typer.echo(f"\n⚠️  Ingest failed after compose: {e}", err=True)
+            typer.echo(
+                f"   Run manually: brain ingest --file {output_path} --sensitivity sensitive",
+                err=True,
+            )
+            raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def remind(
+    install: Annotated[
+        bool,
+        typer.Option(
+            "--install",
+            help="Generate launchd plist and install the daily reminder schedule.",
+        ),
+    ] = False,
+    uninstall: Annotated[
+        bool,
+        typer.Option(
+            "--uninstall",
+            help="Unload and remove the launchd reminder schedule.",
+        ),
+    ] = False,
+    status: Annotated[
+        bool,
+        typer.Option(
+            "--status",
+            help="Show reminder schedule and recent reminder files.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Remind** — manage the daily Brain reminder system.
+
+    Without flags, sends a reminder right now (useful for testing).
+
+    Examples:
+
+        brain remind
+
+        brain remind --install
+
+        brain remind --uninstall
+
+        brain remind --status
+    """
+    _print_header("Daily Reminder")
+
+    cfg = _get_config()
+
+    try:
+        reminder = Reminder(cfg)
+
+        if install:
+            reminder.install()
+        elif uninstall:
+            reminder.uninstall()
+        elif status:
+            reminder.status()
+        else:
+            # Default — send reminder now (test mode)
+            reminder.send()
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except RuntimeError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
     typer.echo("\n✅ Done.\n")
 

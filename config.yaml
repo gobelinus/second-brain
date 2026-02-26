@@ -21,6 +21,8 @@ paths:
   launchd: "launchd"
   todo_txt: "todo.txt"                  # rolling todo.txt at project root
   exports_todos: "exports/todos"        # git ignored, dated per-day backups (future)
+  blogs_public: "blogs/public"
+  blogs_sensitive: "blogs/sensitive"
 
 # -----------------------------------------------------------------------------
 # Ollama / LLM settings
@@ -39,6 +41,8 @@ chroma:
   collections:
     public: "brain_public"
     sensitive: "brain_sensitive"
+    blog_public: "blog_public"
+    blog_sensitive: "blog_sensitive"
 
 # -----------------------------------------------------------------------------
 # Ingestion / chunking settings
@@ -243,6 +247,52 @@ composer:
     - Output ONLY the todo.txt lines. No preamble, no headers, no commentary.
 
     SOURCE NOTES:
+    {content}
+
+# -----------------------------------------------------------------------------
+# Blog Structurer — LLM metadata extraction for blog posts
+#
+# brain ingest --file blogs/public/my-post.md   (auto-detected as blog)
+# brain ingest --file blogs/sensitive/draft.md  (auto-detected as blog)
+#
+# ChromaDB only — no SQLite storage for blog posts.
+# Collections: blog_public / blog_sensitive (separate from daily summaries)
+# -----------------------------------------------------------------------------
+blog:
+  # Chunk size — same as daily summaries
+  chunk_size_words: 500
+  chunk_overlap_words: 50
+
+  # LLM prompt for extracting blog metadata
+  # Placeholders injected at runtime: {content}
+  extraction_prompt: |
+    You are a precise metadata extractor for blog posts written in markdown.
+    Analyze the blog post below and extract structured metadata.
+    Respond ONLY with a valid JSON object — no explanation, no markdown fences,
+    no extra text.
+
+    Required JSON schema:
+    {{
+        "title": "the blog post title — extract from H1 heading or first heading",
+        "slug": "url-friendly version of title — lowercase, hyphens, no special chars",
+        "date": "publication or creation date if mentioned, else null — format YYYY-MM-DD",
+        "tags": ["list of topic tags — infer from content if not explicit"],
+        "status": "one of: draft, published, internal — infer from content context",
+        "url": "external published URL if mentioned in the post, else null"
+    }}
+
+    Rules:
+    - title: use the H1 heading. If no H1, use the first heading found.
+    - slug: derive from title only — lowercase, replace spaces with hyphens,
+      strip special characters (e.g. "My AWS Post!" → "my-aws-post")
+    - date: look for explicit dates in the content or frontmatter. Return null if absent.
+    - tags: extract 3-7 meaningful topic tags from content (e.g. "aws", "autoscaling",
+      "observability"). Lowercase, no spaces.
+    - status: if URL is present assume published. If marked draft or WIP assume draft.
+      If content seems internal/sensitive assume internal. Default to draft.
+    - url: only include if a real external URL is explicitly mentioned in the content.
+
+    Blog Post:
     {content}
 
 # -----------------------------------------------------------------------------

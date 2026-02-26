@@ -186,6 +186,63 @@ class BrainConfig:
                 f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'."
             )
 
+    # ── Blog paths ────────────────────────────────────────────────────────────
+
+    @property
+    def blogs_public(self) -> Path:
+        return ROOT / self._cfg["paths"]["blogs_public"]
+
+    @property
+    def blogs_sensitive(self) -> Path:
+        return ROOT / self._cfg["paths"]["blogs_sensitive"]
+
+    # ── Blog ChromaDB collections ─────────────────────────────────────────────
+
+    @property
+    def blog_public_collection(self) -> str:
+        return self._cfg["chroma"]["collections"]["blog_public"]
+
+    @property
+    def blog_sensitive_collection(self) -> str:
+        return self._cfg["chroma"]["collections"]["blog_sensitive"]
+
+    def blog_collection_for(self, sensitivity: str) -> str:
+        """Return the correct blog ChromaDB collection for a given sensitivity."""
+        if sensitivity == "public":
+            return self.blog_public_collection
+        elif sensitivity == "sensitive":
+            return self.blog_sensitive_collection
+        else:
+            raise ValueError(
+                f"Unknown sensitivity: '{sensitivity}'. Use 'public' or 'sensitive'."
+            )
+
+    def is_blog_file(self, file_path: Path) -> bool:
+        """
+        Detect if a file is a blog post based on its path.
+        Returns True if file lives under blogs/public/ or blogs/sensitive/.
+        """
+        resolved = Path(file_path).resolve()
+        return (
+            self.blogs_public.resolve() in resolved.parents
+            or self.blogs_sensitive.resolve() in resolved.parents
+        )
+
+    # ── Blog structurer settings ──────────────────────────────────────────────
+
+    @property
+    def blog_extraction_prompt(self) -> str:
+        """LLM prompt for extracting blog metadata. Placeholder: {content}"""
+        return self._cfg.get("blog", {}).get("extraction_prompt", "")
+
+    @property
+    def blog_chunk_size(self) -> int:
+        return self._cfg.get("blog", {}).get("chunk_size_words", 500)
+
+    @property
+    def blog_chunk_overlap(self) -> int:
+        return self._cfg.get("blog", {}).get("chunk_overlap_words", 50)
+
     # ── Scanner ───────────────────────────────────────────────────────────────
     # Evaluation order enforced by scan_public_summaries.py:
     #   1. allowlist        → safe, skip further checks
