@@ -3,9 +3,12 @@ cli.py — Brain CLI entrypoint.
 
 Built with Typer. Exposes clean, memorable commands:
   brain ingest    — ingest a daily markdown summary
-  brain query     — semantic query across your brain (Phase 3)
+  brain compose   — combine input files into a structured summary
+  brain remind    — manage the daily reminder system
+  brain query     — semantic query across your brain (Phase 3 ✅)
   brain trend     — structured trend queries via SQLite (Phase 2)
-  brain summarize — summarize a date range (Phase 3)
+  brain summarize — summarize a date range (Phase 3 ✅)
+  brain status    — show store stats and config
 
 Every output command supports --export to write a dated markdown file.
 """
@@ -19,6 +22,7 @@ from brain.composer import Composer
 from brain.config import BrainConfig
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
+from brain.query import RAGEngine
 from brain.reminder import Reminder
 from brain.trend import TrendEngine, TrendFormatter
 
@@ -339,38 +343,72 @@ def query(
     """
     **Query** your brain with a natural language question.
 
-    Performs semantic search across your daily summaries.
+    Performs semantic search across your daily summaries using RAG
+    (Retrieval Augmented Generation) with a local Ollama/Mistral LLM.
 
-    *(Full RAG implementation in Phase 3 — stub active)*
+    The router automatically picks the best retrieval strategy:
+
+    - **Pattern A** — structured/count questions → SQLite only (instant)
+    - **Pattern B** — semantic questions → ChromaDB full scan
+    - **Pattern C** — date-scoped questions → ChromaDB filtered by date
+    - **Pattern D** — analytical/pattern questions → ChromaDB + SQLite
 
     Examples:
 
         brain query "What was I blocked on last month?"
 
-        brain query "Summarise my Azure research" --scope public --export
+        brain query "Find notes about feeling overwhelmed" --scope sensitive
+
+        brain query "How many days did I work on the Brain project?" --export
+
+        brain query "What patterns do you see in my blockers?"
     """
     _print_header("Semantic Query")
     typer.echo(f"   Question: {question}")
     typer.echo(f"   Scope   : {scope}")
+
+    # ── Validate scope ────────────────────────────────────────────────────────
+    if scope not in ("public", "sensitive", "all"):
+        typer.echo(
+            f"\n❌ Invalid scope '{scope}'. Use 'public', 'sensitive', or 'all'.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    cfg = _get_config()
+
+    try:
+        engine = RAGEngine(cfg)
+        result = engine.answer(question=question, scope=scope)
+
+    except ValueError as e:
+        typer.echo(f"\n❌ Query error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error during query: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # ── Render answer ─────────────────────────────────────────────────────────
+    typer.echo()
+    typer.echo(result.answer)
     typer.echo()
 
-    # ── Phase 3 stub ──────────────────────────────────────────────────────────
-    stub_response = (
-        f"🚧 Semantic query engine coming in Phase 3.\n\n"
-        f"**Your question:** {question}\n\n"
-        f"**Scope:** {scope}\n\n"
-        f"The RAG pipeline (ChromaDB + Ollama/Mistral) will answer "
-        f"this question when Phase 3 is complete."
-    )
-
-    typer.echo(stub_response)
+    # ── Query metadata footer ─────────────────────────────────────────────────
+    typer.echo("─" * 40)
+    typer.echo(f"  Pattern : {result.pattern}  |  Scope: {result.scope}")
+    if result.dates_covered:
+        typer.echo(f"  Dates   : {', '.join(result.dates_covered)}")
+    if result.chunks_retrieved:
+        typer.echo(f"  Chunks  : {result.chunks_retrieved} retrieved")
+    typer.echo("─" * 40)
 
     if export:
         # Determine sensitivity from scope for export routing
         sensitivity = scope if scope in ("public", "sensitive") else "public"
-        exporter = Exporter(_get_config())
+        exporter = Exporter(cfg)
         _handle_export(
-            content=stub_response,
+            content=result.to_markdown(),
             command="query",
             sensitivity=sensitivity,
             exporter=exporter,
@@ -537,23 +575,35 @@ def summarize(
     ] = False,
 ) -> None:
     """
-    **Summarize** your activity across a date range.
+    **Summarize** your activity across a date range using RAG.
 
-    *(Full RAG implementation in Phase 3 — stub active)*
+    Retrieves relevant chunks from ChromaDB for the date range and
+    synthesizes a structured markdown summary via Ollama/Mistral.
 
     Examples:
 
         brain summarize --from 2026-02-01 --to 2026-02-20
 
         brain summarize --from 2026-01-01 --to 2026-01-31 --scope public --export
+
+        brain summarize --from 2026-02-01 --to 2026-02-25 --scope sensitive
     """
     _print_header("Date Range Summary")
     typer.echo(f"   From : {date_from}")
     typer.echo(f"   To   : {date_to}")
     typer.echo(f"   Scope: {scope}")
-    typer.echo()
 
-    # ── Basic date validation ─────────────────────────────────────────────────
+    # ── Validate scope ────────────────────────────────────────────────────────
+    if scope not in ("public", "sensitive", "all"):
+        typer.echo(
+            f"\n❌ Invalid scope '{scope}'. Use 'public', 'sensitive', or 'all'.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # ── Basic date format validation ──────────────────────────────────────────
+    # Note: RAGEngine.summarize() also validates this — the check here is just
+    # for fast CLI feedback before any LLM/DB calls are made.
     try:
         from datetime import datetime
 
@@ -566,28 +616,48 @@ def summarize(
             )
             raise typer.Exit(code=1)
     except ValueError as e:
-        typer.echo(
-            "\n❌ Invalid date format. Use YYYY-MM-DD.",
-            err=True,
-        )
+        if "time data" in str(e):  # strptime format error
+            typer.echo(
+                "\n❌ Invalid date format. Use YYYY-MM-DD.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from e
+        raise
+
+    cfg = _get_config()
+
+    try:
+        engine = RAGEngine(cfg)
+        result = engine.summarize(date_from=date_from, date_to=date_to, scope=scope)
+
+    except ValueError as e:
+        typer.echo(f"\n❌ Summarize error: {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    # ── Phase 3 stub ──────────────────────────────────────────────────────────
-    stub_response = (
-        f"🚧 Summarization coming in Phase 3.\n\n"
-        f"**Date Range:** {date_from} → {date_to}\n"
-        f"**Scope:** {scope}\n\n"
-        f"ChromaDB retrieval + Ollama/Mistral summarization "
-        f"will power this command in Phase 3."
-    )
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error during summarize: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
-    typer.echo(stub_response)
+    # ── Render answer ─────────────────────────────────────────────────────────
+    typer.echo()
+    typer.echo(result.answer)
+    typer.echo()
 
+    # ── Summary metadata footer ───────────────────────────────────────────────
+    typer.echo("─" * 40)
+    typer.echo(f"  Pattern : {result.pattern}  |  Scope: {result.scope}")
+    if result.dates_covered:
+        typer.echo(f"  Dates   : {', '.join(result.dates_covered)}")
+    if result.chunks_retrieved:
+        typer.echo(f"  Chunks  : {result.chunks_retrieved} retrieved")
+    typer.echo("─" * 40)
+
+    # ── Optional export ───────────────────────────────────────────────────────
     if export:
         sensitivity = scope if scope in ("public", "sensitive") else "public"
-        exporter = Exporter(_get_config())
+        exporter = Exporter(cfg)
         _handle_export(
-            content=stub_response,
+            content=result.to_markdown(),
             command="summarize",
             sensitivity=sensitivity,
             exporter=exporter,
@@ -625,6 +695,14 @@ def status() -> None:
     typer.echo(f"   LLM model   : {cfg.ollama_llm_model}")
     typer.echo(f"   Embed model : {cfg.ollama_embed_model}")
     typer.echo(f"   Ollama URL  : {cfg.ollama_base_url}")
+
+    # ── Phase 3 query settings ────────────────────────────────────────────────
+    typer.echo("\n🔍 Query Settings")
+    typer.echo(f"   Top-K chunks      : {cfg.rag_top_k}")
+    typer.echo(f"   Max context chunks: {cfg.rag_max_context_chunks}")
+    typer.echo(f"   Similarity cutoff : {cfg.rag_similarity_threshold}")
+    typer.echo(f"   Default scope     : {cfg.rag_default_scope}")
+    typer.echo(f"   Max summarize days: {cfg.rag_max_summarize_days}")
 
     # ── SQLite stats ──────────────────────────────────────────────────────────
     typer.echo("\n🗃️  SQLite Store")
