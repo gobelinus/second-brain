@@ -445,7 +445,7 @@ query:
   # Minimum similarity distance threshold (ChromaDB L2 distance)
   # Chunks with distance > this are considered irrelevant and dropped.
   # 0.0 = identical, 2.0 = completely unrelated. 1.4 is a reasonable cutoff.
-  similarity_threshold: 1.4
+  # similarity_threshold: 1.4
 
   # Summarize command: max days to pull into a single summarize call
   # Prevents huge context blowouts when date ranges are very wide

@@ -32,9 +32,9 @@ Design Decisions
 ────────────────
 - Embedder is called with [question] (single item) — same interface as
   ingest, no new embedding code needed.
-- ChromaDB distance filtering: chunks with L2 distance > similarity_threshold
-  are dropped before the LLM sees them. Prevents hallucination from
-  low-relevance noise.
+- ChromaDB returns raw L2 distances which scale with embedding dimension
+  (nomic-embed-text 768-dim produces distances in the 300–600 range).
+  Filtering is done by top-K ranking only — no distance threshold applied.
 - SQLite metadata is always fetched for Pattern C/D to enrich the LLM
   context with structured facts (projects, blockers, sentiment) alongside
   the raw text chunks.
@@ -52,6 +52,24 @@ from brain.chunker import Embedder
 from brain.config import BrainConfig
 from brain.ingest import ChromaStore, SQLiteStore
 from brain.router import QueryRouter, RouteDecision
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _date_to_int(date_str: str) -> int:
+    """
+    Convert ISO date string to integer for ChromaDB numeric range filtering.
+
+    ChromaDB's $gte/$lte operators only accept numeric values — ISO strings
+    like "2026-02-01" cause a runtime error. YYYYMMDD integer format preserves
+    correct sort order while satisfying the numeric type requirement.
+
+    Examples:
+        "2026-02-01" → 20260201
+        "2026-12-31" → 20261231
+    """
+    return int(date_str.replace("-", ""))
+
 
 # ── Query Result ───────────────────────────────────────────────────────────────
 
@@ -393,15 +411,15 @@ class RAGEngine:
         For Pattern C/D: builds a ChromaDB `where` filter to scope results
         to the date range from the routing decision.
 
-        Applies similarity threshold filtering — drops chunks whose L2
-        distance exceeds config.rag_similarity_threshold.
+        Ranks chunks by L2 distance (lower = more similar) and returns
+        the top max_context_chunks. No threshold filtering — raw L2 distances
+        from nomic-embed-text are in the 300–600 range, not 0.0–2.0.
 
         Returns list of dicts:
             [{"text": str, "metadata": dict, "distance": float}, ...]
         sorted by distance ascending (most relevant first).
         """
         collections = self._collections_for_scope(decision.scope)
-        threshold = self.config.rag_similarity_threshold
         max_chunks = self.config.rag_max_context_chunks
         all_chunks: list[dict] = []
 
@@ -423,8 +441,13 @@ class RAGEngine:
                     include=["documents", "metadatas", "distances"],
                 )
             except Exception as e:
-                # ChromaDB raises if where filter yields 0 candidates
-                # (e.g. date range has no data) — treat as empty, not error
+                err = str(e)
+                # ChromaDB raises when a where filter finds zero matching
+                # documents — this is expected (empty date range) and safe.
+                # All other errors are surfaced so they don't hide bugs like
+                # missing metadata fields (e.g. date_int not yet written).
+                if "no documents" in err.lower() or "does not exist" in err.lower():
+                    continue
                 print(f"        ⚠️  ChromaDB query issue on '{collection_name}': {e}")
                 continue
 
@@ -433,14 +456,13 @@ class RAGEngine:
             distances = results.get("distances", [[]])[0]
 
             for doc, meta, dist in zip(docs, metas, distances, strict=False):
-                if dist <= threshold:
-                    all_chunks.append(
-                        {
-                            "text": doc,
-                            "metadata": meta,
-                            "distance": dist,
-                        }
-                    )
+                all_chunks.append(
+                    {
+                        "text": doc,
+                        "metadata": meta,
+                        "distance": dist,
+                    }
+                )
 
         # Sort by distance (most relevant first), cap at max_context_chunks
         all_chunks.sort(key=lambda c: c["distance"])
@@ -461,18 +483,21 @@ class RAGEngine:
         """
         Build a ChromaDB metadata `where` filter from the route decision.
 
-        ChromaDB supports: $eq, $gte, $lte, $and, $or operators.
+        ⚠️  ChromaDB's $gte/$lte operators require NUMERIC values — they refuse
+        string operands even for ISO date strings. We store dates as integers
+        in the `date_int` metadata field (YYYYMMDD, e.g. 20260201) so range
+        comparisons work correctly via numeric operators.
 
         Returns None if no date bounds → full collection scan.
+        Returns a single condition if only one bound present.
         Returns a $and filter if both bounds present.
-        Returns a single bound filter if only one is present.
         """
         conditions = []
 
         if decision.date_from:
-            conditions.append({"date": {"$gte": decision.date_from}})
+            conditions.append({"date_int": {"$gte": _date_to_int(decision.date_from)}})
         if decision.date_to:
-            conditions.append({"date": {"$lte": decision.date_to}})
+            conditions.append({"date_int": {"$lte": _date_to_int(decision.date_to)}})
 
         if not conditions:
             return None

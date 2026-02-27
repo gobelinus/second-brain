@@ -265,6 +265,9 @@ class ChromaStore:
         chunk_metadatas = [
             {
                 "date": metadata["date"],
+                "date_int": int(
+                    metadata["date"].replace("-", "")
+                ),  # ✅ numeric for $gte/$lte
                 "sensitivity": metadata["sensitivity"],
                 "sentiment": metadata["sentiment"],
                 "raw_file": metadata["raw_file"],

@@ -266,20 +266,21 @@ class TestPatternB:
         assert result.date_from is None
         assert result.date_to is None
 
-    def test_similarity_threshold_filters_distant_chunks(self, engine):
-        """Chunks with distance > threshold should be dropped."""
+    def test_all_chunks_returned_regardless_of_distance(self, engine):
+        """All chunks returned — top-K ranking only, no distance threshold.
+        Raw L2 distances from nomic-embed-text are in the 300-600 range,
+        not 0.0-2.0, so threshold filtering is not applied."""
         chunks = [
-            make_chunk("relevant note", "2026-02-10", distance=0.5),
-            make_chunk("irrelevant noise", "2026-02-11", distance=1.8),  # > 1.4
+            make_chunk("relevant note", "2026-02-10", distance=423.0),
+            make_chunk("also useful note", "2026-02-11", distance=456.0),
         ]
         self.setup_chromadb_mock(engine, chunks)
-        # scope="public" → single collection → only the 0.5-distance chunk passes
         engine.router.route.return_value = make_decision(pattern="B", scope="public")
 
         with patch.object(engine, "_call_llm", return_value="Answer."):
             result = engine.answer("Find relevant notes")
 
-        assert result.chunks_retrieved == 1  # second chunk filtered out
+        assert result.chunks_retrieved == 2  # both chunks returned, none filtered
 
     def test_empty_chromadb_returns_no_results_message(self, engine):
         """When ChromaDB has no matching chunks, return graceful message."""
@@ -337,10 +338,7 @@ class TestPatternC:
 
         # Verify the where filter was built correctly
         call_kwargs = mock_collection.query.call_args.kwargs
-        where = call_kwargs.get("where") or mock_collection.query.call_args[1].get(
-            "where"
-        )
-        print(where)
+        call_kwargs.get("where") or mock_collection.query.call_args[1].get("where")
         assert result.pattern == "C"
         assert result.date_from == "2026-01-01"
         assert result.date_to == "2026-01-31"
@@ -396,20 +394,20 @@ class TestBuildWhereFilter:
     def test_date_from_only(self, engine):
         d = make_decision(date_from="2026-01-01")
         f = engine._build_where_filter(d)
-        assert f == {"date": {"$gte": "2026-01-01"}}
+        assert f == {"date_int": {"$gte": 20260101}}
 
     def test_date_to_only(self, engine):
         d = make_decision(date_to="2026-01-31")
         f = engine._build_where_filter(d)
-        assert f == {"date": {"$lte": "2026-01-31"}}
+        assert f == {"date_int": {"$lte": 20260131}}
 
     def test_both_dates_returns_and_filter(self, engine):
         d = make_decision(date_from="2026-01-01", date_to="2026-01-31")
         f = engine._build_where_filter(d)
         assert f == {
             "$and": [
-                {"date": {"$gte": "2026-01-01"}},
-                {"date": {"$lte": "2026-01-31"}},
+                {"date_int": {"$gte": 20260101}},
+                {"date_int": {"$lte": 20260131}},
             ]
         }
 

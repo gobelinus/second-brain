@@ -60,6 +60,7 @@ class BrainConfig:
 
     def __init__(self):
         self._cfg = load_config()
+        self._root = Path(__file__).parent.parent.parent.resolve()
 
     # ── Ollama ────────────────────────────────────────────────────────────────
 
@@ -380,3 +381,102 @@ class BrainConfig:
         Placeholders injected at runtime: {date}, {timestamp}, {yesterday_status}
         """
         return self._cfg.get("reminder", {}).get("checklist_template", "")
+
+    # ── Phase 3 — Query / RAG settings ───────────────────────────────────────
+
+    @property
+    def rag_top_k(self) -> int:
+        """Number of chunks to retrieve from ChromaDB per query."""
+        return self._cfg.get("query", {}).get("top_k", 5)
+
+    @property
+    def rag_max_context_chunks(self) -> int:
+        """Hard cap on chunks sent to LLM — protects context window."""
+        return self._cfg.get("query", {}).get("max_context_chunks", 8)
+
+    @property
+    def rag_default_scope(self) -> str:
+        """Default search scope when --scope is not specified."""
+        return self._cfg.get("query", {}).get("default_scope", "all")
+
+    @property
+    def rag_similarity_threshold(self) -> float:
+        """
+        ChromaDB L2 distance cutoff.
+        Chunks with distance > this are dropped before reaching the LLM.
+        0.0 = identical, 2.0 = completely unrelated. 1.4 is a good default.
+        """
+        return self._cfg.get("query", {}).get("similarity_threshold", 1.4)
+
+    @property
+    def rag_max_summarize_days(self) -> int:
+        """Max days allowed in a single summarize call — prevents context blowout."""
+        return self._cfg.get("query", {}).get("max_summarize_days", 90)
+
+    @property
+    def rag_system_prompt(self) -> str:
+        """System prompt used for brain query (RAG answer mode)."""
+        return self._cfg.get("query", {}).get(
+            "system_prompt",
+            (
+                "You are a personal knowledge assistant. "
+                "Answer questions based only on the provided context. "
+                "If the context does not contain enough information, say so clearly."
+            ),
+        )
+
+    @property
+    def rag_summarize_system_prompt(self) -> str:
+        """System prompt used for brain summarize (date range summary mode)."""
+        return self._cfg.get("query", {}).get(
+            "summarize_system_prompt",
+            (
+                "You are a personal knowledge assistant. "
+                "Summarize the user's activity across the provided date range. "
+                "Highlight recurring themes, blockers, and achievements. "
+                "Format output as clean structured markdown."
+            ),
+        )
+
+    @property
+    def query_sqlite_trigger_phrases(self) -> list[str]:
+        """
+        Phrases that signal a structured/aggregate question → Pattern A routing.
+        Loaded from config.yaml query.sqlite_trigger_phrases.
+        """
+        return self._cfg.get("query", {}).get(
+            "sqlite_trigger_phrases",
+            [
+                "how many",
+                "count",
+                "total",
+                "which days",
+                "list all",
+                "on what dates",
+                "how often",
+                "most common",
+                "least common",
+                "average",
+            ],
+        )
+
+    # ── Source directory paths — used by reindex script ───────────────────────
+    @property
+    def daily_public_path(self) -> Path:
+        """Path to daily/public/ — git-tracked public summaries."""
+        return self._root / self._cfg["paths"]["daily_public"]
+
+    @property
+    def daily_sensitive_path(self) -> Path:
+        """Path to daily/sensitive/ — git-ignored sensitive summaries."""
+        return self._root / self._cfg["paths"]["daily_sensitive"]
+
+    @property
+    def blogs_public_path(self) -> Path:
+        """Path to blogs/public/ — git-tracked public blog posts."""
+        return self._root / self._cfg["paths"]["blogs_public"]
+
+    @property
+    def blogs_sensitive_path(self) -> Path:
+        """Path to blogs/sensitive/ — git-ignored sensitive blog posts."""
+        return self._root / self._cfg["paths"]["blogs_sensitive"]
