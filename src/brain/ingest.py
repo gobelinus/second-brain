@@ -105,6 +105,122 @@ class SQLiteStore:
             ).fetchone()
             return row is not None
 
+    def query_metadata(
+        self,
+        field: str | None,
+        date_from: str | None,
+        date_to: str | None,
+        sensitivity: str = "all",
+    ) -> list[dict]:
+        """
+        Query structured metadata rows from SQLite.
+
+        Used by RAGEngine for:
+          - Pattern A: direct structured answer (field + date range)
+          - Pattern C: fetch metadata for dates found in ChromaDB results
+          - Pattern D: enrich semantic results with structured facts
+
+        Args:
+            field       : metadata field to filter/aggregate, or None for all fields
+            date_from   : ISO date string lower bound (inclusive), or None
+            date_to     : ISO date string upper bound (inclusive), or None
+            sensitivity : "public" | "sensitive" | "all"
+
+        Returns:
+            List of row dicts — keys match daily_summaries column names.
+            Array fields (projects, blockers, etc.) are returned as raw JSON
+            strings — callers use json.loads() to parse them.
+        """
+        conditions: list[str] = []
+        params: list[str] = []
+
+        # Sensitivity filter
+        if sensitivity in ("public", "sensitive"):
+            conditions.append("sensitivity = ?")
+            params.append(sensitivity)
+
+        # Date range filters
+        if date_from:
+            conditions.append("date >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("date <= ?")
+            params.append(date_to)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        sql = f"""
+            SELECT date, sensitivity, projects, blockers, people,
+                   sentiment, focus_areas, raw_file, ingested_at
+            FROM daily_summaries
+            {where_clause}
+            ORDER BY date ASC
+        """
+
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(row) for row in rows]
+
+    def query_dates_with_value(
+        self,
+        field: str,
+        value: str,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        sensitivity: str = "all",
+    ) -> list[str]:
+        """
+        Find all dates where a JSON array field contains a specific value.
+
+        Used for targeted queries like:
+          "Which days did I work on the Brain project?"
+          "On what dates was 'infra approval' a blocker?"
+
+        Uses SQLite's json_each() to expand JSON arrays for LIKE matching.
+
+        Args:
+            field       : JSON array field name — projects | blockers | focus_areas | people
+            value       : search term (case-insensitive partial match)
+            date_from   : optional lower bound
+            date_to     : optional upper bound
+            sensitivity : "public" | "sensitive" | "all"
+
+        Returns:
+            Sorted list of ISO date strings matching the condition.
+        """
+        if field not in ("projects", "blockers", "focus_areas", "people"):
+            raise ValueError(
+                f"Invalid field '{field}' for json_each query. "
+                f"Must be one of: projects, blockers, focus_areas, people"
+            )
+
+        conditions: list[str] = ["LOWER(json_each.value) LIKE LOWER(?)"]
+        params: list[str] = [f"%{value}%"]
+
+        if sensitivity in ("public", "sensitive"):
+            conditions.append("ds.sensitivity = ?")
+            params.append(sensitivity)
+        if date_from:
+            conditions.append("ds.date >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("ds.date <= ?")
+            params.append(date_to)
+
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+        sql = f"""
+            SELECT DISTINCT ds.date
+            FROM daily_summaries ds, json_each(ds.{field})
+            {where_clause}
+            ORDER BY ds.date ASC
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [row[0] for row in rows]
+
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
 
@@ -184,6 +300,26 @@ class ChromaStore:
             collection.delete(where={"date": date, "sensitivity": sensitivity})
         except Exception:
             pass  # Collection doesn't exist yet — fine
+
+    def collection_exists(self, sensitivity: str) -> bool:
+        """
+        Check if a ChromaDB collection exists and has data.
+
+        Used by RAGEngine to give a clear error message when the store
+        is empty rather than a confusing ChromaDB exception.
+
+        Args:
+            sensitivity: "public" or "sensitive"
+
+        Returns:
+            True if the collection exists and contains at least one chunk.
+        """
+        collection_name = self.config.chroma_collection_for(sensitivity)
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            return collection.count() > 0
+        except Exception:
+            return False
 
 
 # ── Ingestion Pipeline ────────────────────────────────────────────────────────
