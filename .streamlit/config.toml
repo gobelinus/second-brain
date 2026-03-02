@@ -1,0 +1,34 @@
+# .streamlit/config.toml
+# Streamlit configuration for Brain dashboard.
+# Committed to git — no secrets here.
+# Docs: https://docs.streamlit.io/library/advanced-features/configuration
+
+[browser]
+# Disable usage statistics sent to Streamlit servers
+gatherUsageStats = false
+
+[server]
+# Never send error reports to Streamlit
+enableCORS = false
+enableXsrfProtection = true
+# Only accept connections from localhost — no LAN exposure
+address = "localhost"
+port = 8521
+headless = false
+
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[runner]
+magicEnabled = false
+
+[theme]
+base = "light"
+
+# Clean editorial light theme — warm off-white, not blinding white
+backgroundColor          = "#f8f6f1"
+secondaryBackgroundColor = "#eeeae1"
+primaryColor             = "#2563eb"
+textColor                = "#1a1a2e"
+font                     = "monospace"
