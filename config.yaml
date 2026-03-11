@@ -326,24 +326,173 @@ reminder:
 
   # Reminder markdown checklist template
   # {date} and {yesterday} are injected at runtime
+  # ─────────────────────────────────────────────────────────────────────────────
+  #
+  # The three format() placeholders injected by reminder.py are:
+  #   {date}             → today's date, e.g. 2026-03-11
+  #   {timestamp}        → generation time, e.g. 2026-03-11 09:00:12
+  #   {yesterday_status} → SQLite ingest check result for yesterday
+  #
+  # To apply: replace the checklist_template key under reminder: in config.yaml
+  # ─────────────────────────────────────────────────────────────────────────────
   checklist_template: |
     # 🧠 Daily Brain Reminder — {date}
 
     **Generated at:** {timestamp}
 
-    ## Today's Checklist
-
-    - [ ] Drop notes into `inputs/{date}/`
-    - [ ] Run `brain compose --date {date} --ingest`
-    - [ ] Review `daily/sensitive/{date}.md` for accuracy
-    - [ ] Commit public summary: `git add daily/public/{date}.md && git commit`
+    ---
 
     ## Yesterday's Status
 
     {yesterday_status}
 
     ---
-    *This file is auto-generated. Safe to delete after use.*
+
+    ## Today's Checklist
+
+    ### 1. 📥 Drop Notes into inputs/{date}/
+
+    Create the folder and drop your source files:
+    ```
+    mkdir -p inputs/{date}
+    ```
+
+    - [ ] `inputs/{date}/ai_summary.md` — AI-generated daily summary from your tool
+    - [ ] `inputs/{date}/standup.md` — standup / team sync notes (if applicable)
+    - [ ] `inputs/{date}/meetings.md` — any other meeting notes from today
+    - [ ] `inputs/{date}/notes.md` — ad-hoc thoughts, decisions, links, references
+    - [ ] Any other `.md` or `.txt` files you want merged into today's summary
+
+    > 💡 You only need the files that exist — composer skips nothing, merges everything it finds.
+
+    ---
+
+    ### 2. 🧠 Compose + Ingest Sensitive Summary
+
+    ```bash
+    brain compose --date {date} --ingest
+    ```
+
+    This will:
+    - [ ] Merge all files in `inputs/{date}/` via local LLM
+    - [ ] Write structured summary → `daily/sensitive/{date}.md`
+    - [ ] Extract action items → append to `todo.txt`
+    - [ ] Archive inputs → `inputs/archive/{date}/`
+    - [ ] Ingest into SQLite + ChromaDB automatically
+
+    If something looks wrong, preview first without writing:
+    ```bash
+    brain compose --date {date} --dry-run
+    ```
+
+    ---
+
+    ### 3. ✍️ Write + Ingest Public Summary
+
+    Write a sanitised version of your day — safe to commit and share:
+    ```
+    daily/public/{date}.md
+    ```
+
+    - [ ] No internal names, domains, ticket numbers, or salary/HR details
+    - [ ] Focus on: technologies used, decisions made, learning, blockers (anonymised)
+    - [ ] Run the scanner to verify it's clean before committing:
+          ```bash
+          pre-commit run scan-public-summaries --files daily/public/{date}.md
+          ```
+    - [ ] Ingest the public summary:
+          ```bash
+          brain ingest --file daily/public/{date}.md --sensitivity public
+          ```
+
+    ---
+
+    ### 4. 📝 Blog Post (optional)
+
+    Did you write or update a blog post today?
+
+    **New public post (ready to publish):**
+    - [ ] File saved at: `blogs/public/{date}-<slug>.md`
+    - [ ] Scanner check:
+          ```bash
+          pre-commit run scan-public-summaries --files blogs/public/{date}-<slug>.md
+          ```
+    - [ ] Ingest:
+          ```bash
+          brain ingest --file blogs/public/{date}-<slug>.md --sensitivity public
+          ```
+
+    **Draft / sensitive post (internal context, not for sharing):**
+    - [ ] File saved at: `blogs/sensitive/{date}-<slug>-draft.md`
+    - [ ] Ingest:
+          ```bash
+          brain ingest --file blogs/sensitive/{date}-<slug>-draft.md --sensitivity sensitive
+          ```
+
+    > 💡 Blog posts are auto-detected by path — the ingest pipeline routes them
+    > to `blog_public` / `blog_sensitive` ChromaDB collections automatically.
+
+    ---
+
+    ### 5. 🔍 Verify Everything is Ingested
+
+    ```bash
+    brain status --detailed
+    ```
+
+    - [ ] `{date}` shows `✅ up to date` for all files you created today
+    - [ ] No `⚠️ needs ingest` warnings for today's date
+
+    ---
+
+    ### 6. 💾 Commit Public Summaries
+
+    ```bash
+    git add daily/public/{date}.md
+    git add blogs/public/                    # if you wrote a blog post today
+    git add exports/public/                  # if you ran --export on any command
+    git commit -m "data: daily summary {date}"
+    ```
+
+    - [ ] Pre-commit hooks pass (ruff + detect-secrets + public scanner)
+    - [ ] Only public files are staged — check `git status` before committing
+
+    ---
+
+    ### 7. ✅ Review Action Items
+
+    ```bash
+    # View today's extracted action items
+    grep -A 20 "^# {date}" todo.txt
+    ```
+
+    Or open the dashboard and check the Action Items tab:
+    ```bash
+    brain dashboard
+    ```
+
+    - [ ] Review (A) priority items — urgent, do today
+    - [ ] Review (B) priority items — schedule for this week
+    - [ ] Review (C) priority items — backlog
+
+    ---
+
+    ## Quick Reference
+
+    | Command | What it does |
+    |---|---|
+    | `brain compose --date {date} --ingest` | Full compose + ingest in one step |
+    | `brain ingest --file PATH --sensitivity S` | Ingest a single file |
+    | `brain status --detailed` | Disk vs store breakdown |
+    | `brain query "..."` | Ask your brain anything |
+    | `brain trend --field sentiment` | Mood trends over time |
+    | `brain dashboard` | Open browser dashboard |
+    | `uv run python scripts/reindex.py` | Catch up on missed dates |
+
+    ---
+
+    *This file is auto-generated by `brain remind`. Safe to delete after use.*
+    *Saved to: exports/reminders/{date}_reminder.md*
 
 # -----------------------------------------------------------------------------
 # Anonymizer — redacts sensitive data for safe debugging / sharing
