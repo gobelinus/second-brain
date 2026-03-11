@@ -191,6 +191,38 @@ st.markdown(
     font-weight:500; color:#1a1a2e; margin-right:0.3rem;
   }
 
+  /* ── Query tab ── */
+  .query-answer {
+    background:#ffffff; border:1px solid #ddd8cc; border-radius:8px;
+    padding:1.5rem 1.8rem; margin-top:1rem;
+  }
+  .query-meta-bar {
+    display:flex; flex-wrap:wrap; gap:1rem; align-items:center;
+    padding:0.6rem 1rem; background:#f8f6f1;
+    border:1px solid #ddd8cc; border-radius:6px;
+    margin-top:1rem; font-family:'IBM Plex Mono',monospace;
+    font-size:0.72rem; color:#6b7280;
+  }
+  .query-meta-item { display:flex; gap:0.3rem; align-items:center; }
+  .query-meta-item span { color:#1a1a2e; font-weight:500; }
+  .pattern-badge {
+    font-family:'IBM Plex Mono',monospace; font-size:0.72rem;
+    font-weight:500; padding:0.15rem 0.5rem; border-radius:4px;
+    background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;
+  }
+  .query-history-item {
+    padding:0.45rem 0.7rem; border-radius:5px; border:1px solid #ddd8cc;
+    background:#ffffff; margin-bottom:0.3rem; cursor:pointer;
+    font-size:0.82rem; color:#374151; display:flex;
+    justify-content:space-between; align-items:center;
+    transition:border-color 0.1s;
+  }
+  .query-history-item:hover { border-color:#2563eb; color:#1a1a2e; }
+  .query-history-time {
+    font-family:'IBM Plex Mono',monospace; font-size:0.68rem;
+    color:#9ca3af; white-space:nowrap; margin-left:1rem;
+  }
+
   .blocker-row {
     display: flex;
     align-items: flex-start;
@@ -251,6 +283,7 @@ def load_all_entries() -> list[dict]:
             }
         by_date[d]["sensitivities"].append(row["sensitivity"])
         by_date[d]["files"][row["sensitivity"]] = row["raw_file"]
+
     return list(by_date.values())
 
 
@@ -406,6 +439,12 @@ if "selected_date" not in st.session_state:
     st.session_state.selected_date = None
 if "selected_sensitivity" not in st.session_state:
     st.session_state.selected_sensitivity = "public"
+if "query_history" not in st.session_state:
+    st.session_state.query_history = []
+if "query_result" not in st.session_state:
+    st.session_state.query_result = None
+if "query_error" not in st.session_state:
+    st.session_state.query_error = None
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -889,15 +928,159 @@ with tab_todos:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — QUERY (Step 4)
+# TAB 4 — QUERY
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_query:
+    # ── Input row ─────────────────────────────────────────────────────────────
+    q_col, scope_col, btn_col = st.columns([4, 1, 0.7], gap="small")
+
+    with q_col:
+        question_input = st.text_input(
+            "question",
+            placeholder="What was I blocked on last month?  /  Summarise my Azure work  /  How many days did I feel overwhelmed?",
+            label_visibility="collapsed",
+            key="query_input",
+        )
+    with scope_col:
+        scope_input = st.selectbox(
+            "scope",
+            ["all", "public", "sensitive"],
+            label_visibility="collapsed",
+            key="query_scope",
+        )
+    with btn_col:
+        ask_clicked = st.button("Ask  →", use_container_width=True, type="primary")
+
+    # ── Hint line ─────────────────────────────────────────────────────────────
     st.markdown(
-        """
-    <div class="empty-state">
-      <div class="empty-icon">🔍</div>
-      <div>Query interface — coming in Step 4</div>
-    </div>""",
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
+        "color:#9ca3af;margin-top:-0.3rem;margin-bottom:0.8rem;'>"
+        "Tip: questions with dates route to ChromaDB + SQLite. "
+        'Counting questions ("how many...") use SQLite only.</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Run query ─────────────────────────────────────────────────────────────
+    if ask_clicked and question_input.strip():
+        st.session_state.query_error = None
+        st.session_state.query_result = None
+
+        with st.spinner("Thinking… (calling local LLM — may take 15–30s)"):
+            try:
+                from brain.query import RAGEngine
+
+                engine = RAGEngine(get_config())
+                result = engine.answer(
+                    question=question_input.strip(),
+                    scope=scope_input,
+                )
+                st.session_state.query_result = result
+
+                # Prepend to history, keep last 5
+                st.session_state.query_history = (
+                    [
+                        {
+                            "question": question_input.strip(),
+                            "scope": scope_input,
+                            "time": datetime.now().strftime("%H:%M"),
+                            "result": result,
+                        }
+                    ]
+                    + st.session_state.query_history
+                )[:5]
+
+            except Exception as e:
+                st.session_state.query_error = str(e)
+
+    elif ask_clicked and not question_input.strip():
+        st.warning("Type a question first.")
+
+    # ── Render result ─────────────────────────────────────────────────────────
+    result = st.session_state.query_result
+    error = st.session_state.query_error
+
+    if error:
+        st.error(
+            f"**Query failed:** {error}\n\n"
+            "Check that Ollama is running: `ollama serve`\n"
+            f"And that your model is available: `ollama run {get_config().ollama_llm_model}`"
+        )
+
+    elif result:
+        # Answer block
+        st.markdown(
+            f'<div class="query-answer">{result.answer}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Metadata bar
+        dates_str = (
+            ", ".join(result.dates_covered[:6])
+            + (" …" if len(result.dates_covered) > 6 else "")
+            if result.dates_covered
+            else "—"
+        )
+        date_range_str = ""
+        if result.date_from or result.date_to:
+            date_range_str = (
+                f'<div class="query-meta-item">range '
+                f"<span>{result.date_from or '—'} → {result.date_to or '—'}</span></div>"
+            )
+
+        st.markdown(
+            f'<div class="query-meta-bar">'
+            f'  <div class="query-meta-item">'
+            f'    pattern <span class="pattern-badge">{result.pattern}</span>'
+            f"  </div>"
+            f'  <div class="query-meta-item">scope <span>{result.scope}</span></div>'
+            f'  <div class="query-meta-item">chunks <span>{result.chunks_retrieved}</span></div>'
+            f'  <div class="query-meta-item">dates <span>{dates_str}</span></div>'
+            f"  {date_range_str}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    elif not ask_clicked:
+        # No query yet — show example questions
+        st.markdown(
+            """
+        <div class="empty-state" style="min-height:30vh;">
+          <div class="empty-icon">🔍</div>
+          <div>Ask a question about your brain</div>
+          <div style="margin-top:1rem;text-align:left;max-width:480px;">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.72rem;
+                        color:#6b7280;margin-bottom:0.5rem;letter-spacing:0.05em;">
+              EXAMPLE QUESTIONS
+            </div>
+            <div style="font-size:0.82rem;color:#374151;line-height:2;">
+              What was I blocked on last month?<br>
+              Summarise my Azure work in February<br>
+              How many days did I feel overwhelmed?<br>
+              What patterns do you see in my blockers?<br>
+              Which projects took the most focus?
+            </div>
+          </div>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+    # ── Query history ─────────────────────────────────────────────────────────
+    history = st.session_state.query_history
+    if len(history) > 1:  # only show history if more than current query
+        st.markdown(
+            "<div style='margin-top:1.5rem;'>"
+            "<div class='section-label'>Recent queries</div>",
+            unsafe_allow_html=True,
+        )
+        for i, h in enumerate(history[1:], 1):  # skip index 0 = current
+            if st.button(
+                f"{h['question']}",
+                key=f"history_{i}",
+                use_container_width=True,
+            ):
+                st.session_state.query_result = h["result"]
+                st.session_state.query_error = None
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
