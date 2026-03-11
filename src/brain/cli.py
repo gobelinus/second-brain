@@ -9,6 +9,7 @@ Built with Typer. Exposes clean, memorable commands:
   brain trend     — structured trend queries via SQLite (Phase 2)
   brain summarize — summarize a date range (Phase 3 ✅)
   brain status    — show store stats and config
+  brain dashboard — launch the Streamlit dashboard
 
 Every output command supports --export to write a dated markdown file.
 """
@@ -674,13 +675,27 @@ def summarize(
 
 
 @app.command()
-def status() -> None:
+def status(
+    detailed: Annotated[
+        bool,
+        typer.Option(
+            "--detailed",
+            "-d",
+            help="Show per-date disk vs store breakdown and missing ingest commands.",
+        ),
+    ] = False,
+) -> None:
     """
     **Status** — show current Brain configuration and store stats.
+
+    Use **--detailed** to see a per-date breakdown of what's on disk
+    vs what's ingested, with ready-to-run commands for any gaps.
 
     Examples:
 
         brain status
+
+        brain status --detailed
     """
     import sqlite3
 
@@ -710,18 +725,21 @@ def status() -> None:
         try:
             conn = sqlite3.connect(cfg.sqlite_db)
             total = conn.execute("SELECT COUNT(*) FROM daily_summaries").fetchone()[0]
-            public = conn.execute(
+            public_count = conn.execute(
                 "SELECT COUNT(*) FROM daily_summaries WHERE sensitivity='public'"
             ).fetchone()[0]
-            sensitive = conn.execute(
+            sensitive_count = conn.execute(
                 "SELECT COUNT(*) FROM daily_summaries WHERE sensitivity='sensitive'"
             ).fetchone()[0]
             latest = conn.execute("SELECT MAX(date) FROM daily_summaries").fetchone()[0]
+            earliest = conn.execute("SELECT MIN(date) FROM daily_summaries").fetchone()[
+                0
+            ]
             conn.close()
             typer.echo(f"   Total entries  : {total}")
-            typer.echo(f"   Public entries : {public}")
-            typer.echo(f"   Sensitive      : {sensitive}")
-            typer.echo(f"   Latest entry   : {latest or 'none'}")
+            typer.echo(f"   Public entries : {public_count}")
+            typer.echo(f"   Sensitive      : {sensitive_count}")
+            typer.echo(f"   Range          : {earliest or 'none'} → {latest or 'none'}")
         except Exception as e:
             typer.echo(f"   ⚠️  Could not read SQLite: {e}")
     else:
@@ -751,10 +769,164 @@ def status() -> None:
     else:
         typer.echo("   No vector store found — run 'brain ingest' first.")
 
+    # ── Detailed per-date breakdown ───────────────────────────────────────────
+    if detailed:
+        typer.echo("\n📅  Per-Date Breakdown (disk vs store)")
+        typer.echo(f"   {'DATE':<14} {'ON DISK':<24} {'INGESTED':<24} STATUS")
+        typer.echo("   " + "─" * 72)
+
+        try:
+            # What's in SQLite
+            conn = sqlite3.connect(cfg.sqlite_db)
+            rows = conn.execute(
+                "SELECT date, sensitivity FROM daily_summaries ORDER BY date DESC"
+            ).fetchall()
+            conn.close()
+
+            ingested: dict[str, set] = {}
+            for d, s in rows:
+                ingested.setdefault(d, set()).add(s)
+
+            # What's on disk — scan daily/ directories only
+            on_disk: dict[str, set] = {}
+            for f in cfg.daily_public_path.glob("*.md"):
+                on_disk.setdefault(f.stem, set()).add("public")
+            for f in cfg.daily_sensitive_path.glob("*.md"):
+                on_disk.setdefault(f.stem, set()).add("sensitive")
+
+            all_dates = sorted(set(ingested) | set(on_disk), reverse=True)
+            needs_ingest: list[tuple[str, set]] = []
+
+            for d in all_dates:
+                disk = on_disk.get(d, set())
+                store = ingested.get(d, set())
+                todo = disk - store  # on disk but not yet ingested
+
+                disk_str = " + ".join(sorted(disk)) if disk else "—"
+                store_str = " + ".join(sorted(store)) if store else "—"
+
+                if todo:
+                    status_str = "⚠️  needs ingest"
+                    needs_ingest.append((d, todo))
+                elif disk and disk == store:
+                    status_str = "✅ up to date"
+                elif not disk and store:
+                    status_str = "ℹ️  ingested (file removed)"
+                else:
+                    status_str = "—"
+
+                typer.echo(f"   {d:<14} {disk_str:<24} {store_str:<24} {status_str}")
+
+            # ── Commands for gaps ─────────────────────────────────────────────
+            if needs_ingest:
+                typer.echo(
+                    f"\n   ⚠️  {sum(len(s) for _, s in needs_ingest)} file(s) on disk not yet ingested."
+                )
+                typer.echo("   Run these commands to catch up:\n")
+                for d, sensitivities in sorted(needs_ingest):
+                    for s in sorted(sensitivities):
+                        typer.echo(
+                            f"   brain ingest --file daily/{s}/{d}.md --sensitivity {s}"
+                        )
+                typer.echo()
+                typer.echo("   Or ingest everything at once:")
+                typer.echo("   uv run python scripts/reindex.py")
+            else:
+                typer.echo("\n   ✅ Everything on disk is ingested.")
+
+        except Exception as e:
+            typer.echo(f"   ⚠️  Could not build breakdown: {e}")
+
     typer.echo()
 
 
 # ── Private Helpers ───────────────────────────────────────────────────────────
+
+
+@app.command()
+def dashboard(
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            "-p",
+            help="Port to run the dashboard on.",
+        ),
+    ] = 8501,
+    no_browser: Annotated[
+        bool,
+        typer.Option(
+            "--no-browser",
+            help="Don't open a browser window automatically.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Dashboard** — launch the Streamlit browser dashboard.
+
+    Opens the Brain dashboard in your default browser.
+    Runs on localhost only — no external access.
+
+    Examples:
+
+        brain dashboard
+
+        brain dashboard --port 8502
+
+        brain dashboard --no-browser
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    _print_header("Brain Dashboard")
+
+    dashboard_path = Path(__file__).parent.parent.parent / "dashboard.py"
+
+    if not dashboard_path.exists():
+        typer.echo(f"\n❌ dashboard.py not found at: {dashboard_path}", err=True)
+        typer.echo(
+            "   Make sure dashboard.py is in the project root directory.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    args = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(dashboard_path),
+        "--server.port",
+        str(port),
+        "--server.address",
+        "localhost",
+    ]
+
+    if no_browser:
+        args += ["--server.headless", "true"]
+
+    typer.echo(f"\n   Dashboard : {dashboard_path.name}")
+    typer.echo(f"   URL       : http://localhost:{port}")
+    typer.echo(
+        f"   Browser   : {'no' if no_browser else 'yes — opening automatically'}"
+    )
+    typer.echo()
+    typer.echo("   Press Ctrl+C to stop.\n")
+
+    try:
+        subprocess.run(args, check=True)
+    except KeyboardInterrupt:
+        typer.echo("\n\n   Dashboard stopped.")
+    except FileNotFoundError:
+        typer.echo(
+            "\n❌ Streamlit not found. Install it first:\n   uv add streamlit plotly",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+    except subprocess.CalledProcessError as e:
+        typer.echo(f"\n❌ Dashboard failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 def _build_ingest_report(metadata: dict) -> str:
