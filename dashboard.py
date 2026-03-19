@@ -334,6 +334,64 @@ def load_blockers(
     ]
 
 
+@st.cache_data(ttl=60)
+def load_sentiment_timeline(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sensitivity: str = "all",
+) -> list[dict]:
+    """
+    Load one sentiment row per day from SQLite.
+    When both public + sensitive exist for the same date, sensitive wins
+    (it has more context). Returns list of {date, sentiment} dicts, oldest first.
+    """
+    cfg = get_config()
+    if not cfg.sqlite_db.exists():
+        return []
+
+    conditions: list[str] = []
+    params: list = []
+
+    if date_from:
+        conditions.append("date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("date <= ?")
+        params.append(date_to)
+    if sensitivity != "all":
+        conditions.append("sensitivity = ?")
+        params.append(sensitivity)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    conn = sqlite3.connect(cfg.sqlite_db)
+    conn.row_factory = sqlite3.Row
+    # MAX(sensitivity) — 'sensitive' > 'public' lexicographically, so sensitive wins
+    rows = conn.execute(
+        f"""
+        SELECT date, MAX(sensitivity) AS sensitivity,
+               MAX(CASE WHEN sensitivity = 'sensitive' THEN sentiment ELSE NULL END)
+                 AS sens_sentiment,
+               MAX(CASE WHEN sensitivity = 'public'    THEN sentiment ELSE NULL END)
+                 AS pub_sentiment
+        FROM daily_summaries
+        {where}
+        GROUP BY date
+        ORDER BY date ASC
+    """,
+        params,
+    ).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        # Prefer sensitive sentiment; fall back to public
+        sentiment = r["sens_sentiment"] or r["pub_sentiment"] or "neutral"
+        result.append({"date": r["date"], "sentiment": sentiment})
+
+    return result
+
+
 @st.cache_data(ttl=30)
 def load_todos() -> list[dict]:
     """
@@ -480,10 +538,11 @@ with st.sidebar:
 
 # ── Tab bar ───────────────────────────────────────────────────────────────────
 
-tab_entries, tab_blockers, tab_todos, tab_query = st.tabs(
+tab_entries, tab_blockers, tab_mood, tab_todos, tab_query = st.tabs(
     [
         "📅  Daily Entries",
         "🚧  Blockers",
+        "😌  Mood",
         "✅  Action Items",
         "🔍  Query",
     ]
@@ -771,7 +830,200 @@ with tab_blockers:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — ACTION ITEMS
+# TAB 3 — MOOD / SENTIMENT TIMELINE
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_mood:
+    # ── Controls ──────────────────────────────────────────────────────────────
+    m_col1, m_col2, m_col3 = st.columns([1.5, 1.5, 1])
+
+    all_entries_m = load_all_entries()
+    dates_avail_m = [e["date"] for e in all_entries_m]
+
+    with m_col1:
+        default_from_m = (datetime.today() - timedelta(days=90)).strftime("%Y-%m-%d")
+        earliest_m = min(dates_avail_m) if dates_avail_m else default_from_m
+        m_from = st.date_input(
+            "From",
+            value=datetime.strptime(max(default_from_m, earliest_m), "%Y-%m-%d"),
+            key="m_from",
+        )
+    with m_col2:
+        m_to = st.date_input("To", value=datetime.today(), key="m_to")
+    with m_col3:
+        m_sens = st.selectbox(
+            "Sensitivity", ["all", "public", "sensitive"], key="m_sens"
+        )
+
+    timeline = load_sentiment_timeline(
+        date_from=m_from.strftime("%Y-%m-%d"),
+        date_to=m_to.strftime("%Y-%m-%d"),
+        sensitivity=m_sens,
+    )
+
+    st.markdown("<hr style='margin:0.5rem 0 1rem 0;'>", unsafe_allow_html=True)
+
+    if not timeline:
+        st.markdown(
+            """
+        <div class="empty-state">
+          <div class="empty-icon">📭</div>
+          <div>No sentiment data in this date range.</div>
+          <div style="margin-top:0.4rem;font-size:0.75rem;color:#94a3b8;">
+            brain ingest --file daily/public/YYYY-MM-DD.md
+          </div>
+        </div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        # ── Sentiment colour map — consistent with emoji map ──────────────────
+        SENTIMENT_COLOUR = {
+            "productive": "#22c55e",  # green
+            "energized": "#3b82f6",  # blue
+            "neutral": "#94a3b8",  # slate
+            "frustrated": "#f59e0b",  # amber
+            "overwhelmed": "#ef4444",  # red
+        }
+        SENTIMENT_ORDER = [
+            "productive",
+            "energized",
+            "neutral",
+            "frustrated",
+            "overwhelmed",
+        ]
+
+        dates = [r["date"] for r in timeline]
+        sentiments = [r["sentiment"] for r in timeline]
+        colours = [SENTIMENT_COLOUR.get(s, "#94a3b8") for s in sentiments]
+
+        # Numeric y-axis: 0 = best (productive), 4 = worst (overwhelmed)
+        # Gives chart a natural "up is good" feel
+        SENTIMENT_Y = {s: i for i, s in enumerate(SENTIMENT_ORDER)}
+        y_vals = [SENTIMENT_Y.get(s, 2) for s in sentiments]
+
+        # ── Line + scatter chart ──────────────────────────────────────────────
+        fig_m = go.Figure()
+
+        # Faint connecting line — shows continuity between days
+        fig_m.add_trace(
+            go.Scatter(
+                x=dates,
+                y=y_vals,
+                mode="lines",
+                line=dict(color="#e2e8f0", width=1.5),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+        # One scatter trace per sentiment so legend works cleanly
+        for sentiment in SENTIMENT_ORDER:
+            mask = [s == sentiment for s in sentiments]
+            x_filt = [d for d, m in zip(dates, mask, strict=False) if m]
+            y_filt = [y for y, m in zip(y_vals, mask, strict=False) if m]
+            count = sum(mask)
+            if not x_filt:
+                continue
+
+            fig_m.add_trace(
+                go.Scatter(
+                    x=x_filt,
+                    y=y_filt,
+                    mode="markers",
+                    name=f"{sentiment_emoji(sentiment)}  {sentiment}  ({count}d)",
+                    marker=dict(
+                        color=SENTIMENT_COLOUR[sentiment],
+                        size=10,
+                        line=dict(color="white", width=1.5),
+                    ),
+                    hovertemplate=(f"<b>{sentiment}</b><br>%{{x}}<extra></extra>"),
+                )
+            )
+
+        fig_m.update_layout(
+            height=320,
+            margin=dict(l=10, r=20, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(
+                showgrid=True,
+                gridcolor="#f1f5f9",
+                zeroline=False,
+                tickfont=dict(family="IBM Plex Mono", size=10, color="#94a3b8"),
+                tickangle=-35,
+            ),
+            yaxis=dict(
+                tickmode="array",
+                tickvals=list(SENTIMENT_Y.values()),
+                ticktext=[f"{sentiment_emoji(s)}  {s}" for s in SENTIMENT_ORDER],
+                tickfont=dict(family="IBM Plex Sans", size=12, color="#0f172a"),
+                gridcolor="#f1f5f9",
+                zeroline=False,
+                autorange="reversed",  # productive at top, overwhelmed at bottom
+            ),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="left",
+                x=0,
+                font=dict(family="IBM Plex Sans", size=11, color="#374151"),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            hoverlabel=dict(
+                bgcolor="#ffffff",
+                bordercolor="#e2e8f0",
+                font=dict(family="IBM Plex Sans", size=12),
+            ),
+        )
+
+        st.markdown(
+            f'<div class="panel-header">Mood timeline — {len(timeline)} day(s)</div>',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(fig_m, use_container_width=True)
+
+        # ── Distribution summary bar ──────────────────────────────────────────
+        dist = Counter(sentiments)
+        total = len(sentiments)
+
+        summary_items = "".join(
+            f'<div class="todo-summary-item">'
+            f"  {sentiment_emoji(s)} <span>{dist[s]}</span> {s}"
+            f'  <span style="color:#9ca3af;font-size:0.7rem;">'
+            f"    ({round(dist[s] / total * 100)}%)"
+            f"  </span>"
+            f"</div>"
+            for s in SENTIMENT_ORDER
+            if dist[s] > 0
+        )
+        st.markdown(
+            f'<div class="todo-summary-bar">{summary_items}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Day-by-day table ──────────────────────────────────────────────────
+        st.markdown(
+            '<div class="panel-header" style="margin-top:1.2rem;">Day by day</div>',
+            unsafe_allow_html=True,
+        )
+        for row in reversed(timeline):  # newest first in table
+            s = row["sentiment"]
+            colour = SENTIMENT_COLOUR.get(s, "#94a3b8")
+            st.markdown(
+                f"""<div class="blocker-row">
+                  <div class="blocker-date">{row["date"]}</div>
+                  <div class="blocker-text" style="color:{colour};font-weight:500;">
+                    {sentiment_emoji(s)}&nbsp; {s}
+                  </div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — ACTION ITEMS
+# ══════════════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_todos:
@@ -928,7 +1180,7 @@ with tab_todos:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — QUERY
+# TAB 5 — QUERY
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_query:
