@@ -960,6 +960,96 @@ def _build_ingest_report(metadata: dict) -> str:
 """
 
 
+# ── Anonymize command ─────────────────────────────────────────────────────────
+
+
+@app.command()
+def anonymize(
+    file: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the file to anonymize.",
+        ),
+    ],
+    diff: Annotated[
+        bool,
+        typer.Option(
+            "--diff",
+            help="Show which lines were changed (printed to stderr).",
+        ),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Write anonymized content to file instead of stdout.",
+        ),
+    ] = None,
+) -> None:
+    """
+    **Anonymize** a file — redact sensitive data for safe sharing or debugging.
+
+    Applies all rules from config.yaml: people names, internal URLs, AWS IDs,
+    secrets, IPs, hostnames, and local paths.
+
+    Output goes to stdout by default (pipe-friendly). Use --output to write
+    to a file instead.
+
+    Examples:
+
+        brain anonymize daily/sensitive/2026-02-24.md
+
+        brain anonymize daily/sensitive/2026-02-24.md | pbcopy
+
+        brain anonymize daily/sensitive/2026-02-24.md --diff
+
+        brain anonymize daily/sensitive/2026-02-24.md --output /tmp/safe.md
+    """
+    import sys
+
+    from brain.anonymizer import Anonymizer, print_diff, print_stats
+
+    _print_header("Anonymize")
+
+    if not file.exists():
+        typer.echo(f"\n❌ File not found: {file}", err=True)
+        raise typer.Exit(code=1)
+
+    supported = {".md", ".txt", ".log", ".py", ".json"}
+    if file.suffix not in supported:
+        typer.echo(
+            f"\n⚠️  Unexpected file type: {file.suffix} — proceeding anyway", err=True
+        )
+
+    cfg = _get_config()
+
+    try:
+        original = file.read_text(encoding="utf-8")
+        anonymizer = Anonymizer(cfg)
+        anonymized = anonymizer.anonymize(original)
+
+        stats = anonymizer.redaction_stats(original, anonymized)
+        print_stats(stats)
+
+        if diff:
+            print_diff(original, anonymized)
+
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(anonymized, encoding="utf-8")
+            typer.echo(f"\n📄 Written to: {output}")
+        else:
+            # Write to stdout — typer.echo adds a newline, use sys.stdout directly
+            sys.stdout.write(anonymized)
+
+    except Exception as e:
+        typer.echo(f"\n❌ Anonymization failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n", err=True)
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
