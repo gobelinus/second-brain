@@ -608,6 +608,12 @@ if "query_result" not in st.session_state:
     st.session_state.query_result = None
 if "query_error" not in st.session_state:
     st.session_state.query_error = None
+if "gf_from" not in st.session_state:
+    st.session_state.gf_from = datetime.today() - timedelta(days=90)
+if "gf_to" not in st.session_state:
+    st.session_state.gf_to = datetime.today()
+if "gf_sens" not in st.session_state:
+    st.session_state.gf_sens = "all"
 
 # Init history table (idempotent) and pre-populate session state from DB
 _init_query_history_table()
@@ -638,6 +644,60 @@ with st.sidebar:
     st.metric("Public", sum(1 for e in entries if "public" in e["sensitivities"]))
     st.metric("Sensitive", sum(1 for e in entries if "sensitive" in e["sensitivities"]))
     st.metric("Latest", entries[0]["date"] if entries else "—")
+
+    st.markdown("<hr style='margin:1rem 0;'>", unsafe_allow_html=True)
+
+    # ── Global date filter — drives default values in every tab ───────────────
+    st.markdown(
+        "<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
+        "color:#64748b;letter-spacing:0.08em;text-transform:uppercase;"
+        "margin-bottom:0.5rem;'>Global filter</div>",
+        unsafe_allow_html=True,
+    )
+
+    all_dates = [e["date"] for e in entries]
+    earliest_gf = (
+        datetime.strptime(min(all_dates), "%Y-%m-%d")
+        if all_dates
+        else datetime.today() - timedelta(days=90)
+    )
+
+    gf_from = st.date_input(
+        "From",
+        value=st.session_state.gf_from,
+        min_value=earliest_gf,
+        max_value=datetime.today(),
+        key="gf_from_input",
+    )
+    gf_to = st.date_input(
+        "To",
+        value=st.session_state.gf_to,
+        min_value=earliest_gf,
+        max_value=datetime.today(),
+        key="gf_to_input",
+    )
+    gf_sens = st.selectbox(
+        "Sensitivity",
+        ["all", "public", "sensitive"],
+        index=["all", "public", "sensitive"].index(st.session_state.gf_sens),
+        key="gf_sens_input",
+    )
+
+    # Persist to session state so tabs can read them
+    st.session_state.gf_from = gf_from
+    st.session_state.gf_to = gf_to
+    st.session_state.gf_sens = gf_sens
+
+    col_apply, col_reset = st.columns(2)
+    with col_apply:
+        if st.button("Apply", use_container_width=True, type="primary"):
+            st.rerun()
+    with col_reset:
+        if st.button("Reset", use_container_width=True):
+            st.session_state.gf_from = datetime.today() - timedelta(days=90)
+            st.session_state.gf_to = datetime.today()
+            st.session_state.gf_sens = "all"
+            st.rerun()
 
     st.markdown("<hr style='margin:1rem 0;'>", unsafe_allow_html=True)
     st.caption("Auto-refreshes every 60s")
@@ -710,6 +770,11 @@ with tab_entries:
                 filtered = [e for e in entries if "sensitive" in e["sensitivities"]]
             if search_date:
                 filtered = [e for e in filtered if search_date in e["date"]]
+
+            # Apply global date filter
+            gf_from_s = st.session_state.gf_from.strftime("%Y-%m-%d")
+            gf_to_s = st.session_state.gf_to.strftime("%Y-%m-%d")
+            filtered = [e for e in filtered if gf_from_s <= e["date"] <= gf_to_s]
 
             for entry in filtered:
                 d = entry["date"]
@@ -809,20 +874,22 @@ with tab_blockers:
     dates_avail = [e["date"] for e in all_entries]
 
     with ctrl1:
-        default_from = (datetime.today() - timedelta(days=90)).strftime("%Y-%m-%d")
-        earliest = min(dates_avail) if dates_avail else default_from
         b_from = st.date_input(
             "From",
-            value=datetime.strptime(max(default_from, earliest), "%Y-%m-%d"),
+            value=st.session_state.gf_from,
             key="b_from",
         )
 
     with ctrl2:
-        b_to = st.date_input("To", value=datetime.today(), key="b_to")
+        b_to = st.date_input("To", value=st.session_state.gf_to, key="b_to")
 
     with ctrl3:
+        sens_opts = ["all", "public", "sensitive"]
         b_sens = st.selectbox(
-            "Sensitivity", ["all", "public", "sensitive"], key="b_sens"
+            "Sensitivity",
+            sens_opts,
+            index=sens_opts.index(st.session_state.gf_sens),
+            key="b_sens",
         )
 
     blockers = load_blockers(
@@ -947,22 +1014,21 @@ with tab_mood:
     # ── Controls ──────────────────────────────────────────────────────────────
     m_col1, m_col2, m_col3 = st.columns([1.5, 1.5, 1])
 
-    all_entries_m = load_all_entries()
-    dates_avail_m = [e["date"] for e in all_entries_m]
-
     with m_col1:
-        default_from_m = (datetime.today() - timedelta(days=90)).strftime("%Y-%m-%d")
-        earliest_m = min(dates_avail_m) if dates_avail_m else default_from_m
         m_from = st.date_input(
             "From",
-            value=datetime.strptime(max(default_from_m, earliest_m), "%Y-%m-%d"),
+            value=st.session_state.gf_from,
             key="m_from",
         )
     with m_col2:
-        m_to = st.date_input("To", value=datetime.today(), key="m_to")
+        m_to = st.date_input("To", value=st.session_state.gf_to, key="m_to")
     with m_col3:
+        sens_opts_m = ["all", "public", "sensitive"]
         m_sens = st.selectbox(
-            "Sensitivity", ["all", "public", "sensitive"], key="m_sens"
+            "Sensitivity",
+            sens_opts_m,
+            index=sens_opts_m.index(st.session_state.gf_sens),
+            key="m_sens",
         )
 
     timeline = load_sentiment_timeline(
@@ -1153,6 +1219,15 @@ with tab_todos:
             unsafe_allow_html=True,
         )
     else:
+        # Apply global date range filter first — then local controls refine further
+        gf_from_s_t = st.session_state.gf_from.strftime("%Y-%m-%d")
+        gf_to_s_t = st.session_state.gf_to.strftime("%Y-%m-%d")
+        todos = [
+            t
+            for t in todos
+            if t["date"] == "unknown" or gf_from_s_t <= t["date"] <= gf_to_s_t
+        ]
+
         # ── Filters row ───────────────────────────────────────────────────────
         tf1, tf2, tf3, _ = st.columns([1, 1, 1, 1.5])
 
