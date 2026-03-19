@@ -392,6 +392,113 @@ def load_sentiment_timeline(
     return result
 
 
+def _init_query_history_table() -> None:
+    """
+    Create the query_history table if it doesn't exist.
+    Called once at startup — idempotent.
+    """
+    cfg = get_config()
+    cfg.sqlite_db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(cfg.sqlite_db)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS query_history (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            asked_at         TEXT    NOT NULL,
+            question         TEXT    NOT NULL,
+            scope            TEXT    NOT NULL DEFAULT 'all',
+            pattern          TEXT,
+            answer           TEXT    NOT NULL,
+            chunks_retrieved INTEGER NOT NULL DEFAULT 0,
+            dates_covered    TEXT    NOT NULL DEFAULT '[]',  -- JSON array
+            rationale        TEXT    NOT NULL DEFAULT ''
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def save_query_to_history(question: str, scope: str, result) -> None:
+    """
+    Persist a query result to SQLite query_history table.
+    result is a QueryResult dataclass from brain.query.
+    Clears the @st.cache_data for load_query_history so the UI
+    reflects the new row immediately.
+    """
+    import json as _json
+
+    cfg = get_config()
+    conn = sqlite3.connect(cfg.sqlite_db)
+    conn.execute(
+        """
+        INSERT INTO query_history
+            (asked_at, question, scope, pattern, answer,
+             chunks_retrieved, dates_covered, rationale)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+        (
+            datetime.now().isoformat(),
+            question,
+            scope,
+            getattr(result, "pattern", ""),
+            getattr(result, "answer", ""),
+            getattr(result, "chunks_retrieved", 0),
+            _json.dumps(getattr(result, "dates_covered", [])),
+            getattr(result, "rationale", ""),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    # Bust the cache so load_query_history returns the new row
+    load_query_history.clear()
+
+
+@st.cache_data(ttl=30)
+def load_query_history(limit: int = 20) -> list[dict]:
+    """
+    Load the most recent query history rows from SQLite, newest first.
+    Returns list of plain dicts (serialisation-safe for session state).
+    """
+    import json as _json
+
+    cfg = get_config()
+    if not cfg.sqlite_db.exists():
+        return []
+    try:
+        conn = sqlite3.connect(cfg.sqlite_db)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, asked_at, question, scope, pattern,
+                   answer, chunks_retrieved, dates_covered, rationale
+            FROM   query_history
+            ORDER  BY id DESC
+            LIMIT  ?
+        """,
+            (limit,),
+        ).fetchall()
+        conn.close()
+    except sqlite3.OperationalError:
+        # Table doesn't exist yet — first run before any query
+        return []
+
+    return [
+        {
+            "id": r["id"],
+            "asked_at": r["asked_at"],
+            "question": r["question"],
+            "scope": r["scope"],
+            "pattern": r["pattern"] or "—",
+            "answer": r["answer"],
+            "chunks_retrieved": r["chunks_retrieved"],
+            "dates_covered": _json.loads(r["dates_covered"]),
+            "rationale": r["rationale"],
+            # Friendly display time
+            "time": r["asked_at"][11:16],  # HH:MM from ISO string
+        }
+        for r in rows
+    ]
+
+
 @st.cache_data(ttl=30)
 def load_todos() -> list[dict]:
     """
@@ -497,12 +604,15 @@ if "selected_date" not in st.session_state:
     st.session_state.selected_date = None
 if "selected_sensitivity" not in st.session_state:
     st.session_state.selected_sensitivity = "public"
-if "query_history" not in st.session_state:
-    st.session_state.query_history = []
 if "query_result" not in st.session_state:
     st.session_state.query_result = None
 if "query_error" not in st.session_state:
     st.session_state.query_error = None
+
+# Init history table (idempotent) and pre-populate session state from DB
+_init_query_history_table()
+if "query_history" not in st.session_state:
+    st.session_state.query_history = load_query_history(limit=20)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -1229,18 +1339,14 @@ with tab_query:
                 )
                 st.session_state.query_result = result
 
-                # Prepend to history, keep last 5
-                st.session_state.query_history = (
-                    [
-                        {
-                            "question": question_input.strip(),
-                            "scope": scope_input,
-                            "time": datetime.now().strftime("%H:%M"),
-                            "result": result,
-                        }
-                    ]
-                    + st.session_state.query_history
-                )[:5]
+                # Persist to SQLite — survives refresh and restarts
+                save_query_to_history(
+                    question=question_input.strip(),
+                    scope=scope_input,
+                    result=result,
+                )
+                # Refresh session state history from DB
+                st.session_state.query_history = load_query_history(limit=20)
 
             except Exception as e:
                 st.session_state.query_error = str(e)
@@ -1318,21 +1424,64 @@ with tab_query:
             unsafe_allow_html=True,
         )
 
-    # ── Query history ─────────────────────────────────────────────────────────
+    # ── Query history (persistent — survives refresh) ─────────────────────────
     history = st.session_state.query_history
-    if len(history) > 1:  # only show history if more than current query
+    # Skip index 0 only if it matches the current active question
+    current_q = question_input.strip() if ask_clicked else None
+    display_history = (
+        [h for h in history if h["question"] != current_q] if current_q else history
+    )
+
+    if display_history:
+        st.markdown("<hr style='margin:1.5rem 0 1rem 0;'>", unsafe_allow_html=True)
         st.markdown(
-            "<div style='margin-top:1.5rem;'>"
-            "<div class='section-label'>Recent queries</div>",
+            "<div class='panel-header'>Query history</div>",
             unsafe_allow_html=True,
         )
-        for i, h in enumerate(history[1:], 1):  # skip index 0 = current
-            if st.button(
-                f"{h['question']}",
-                key=f"history_{i}",
-                use_container_width=True,
-            ):
-                st.session_state.query_result = h["result"]
-                st.session_state.query_error = None
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        for i, h in enumerate(display_history):
+            date_label = h["asked_at"][:10]  # YYYY-MM-DD
+            time_label = h["time"]  # HH:MM
+            pattern = h["pattern"] or "—"
+            scope = h["scope"]
+
+            col_q, col_meta, col_btn = st.columns([4, 2, 0.8], gap="small")
+            with col_q:
+                st.markdown(
+                    f"<div style='font-size:0.85rem;color:#0f172a;"
+                    f"padding:0.4rem 0;line-height:1.4;'>{h['question']}</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_meta:
+                st.markdown(
+                    f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
+                    f"color:#94a3b8;padding:0.5rem 0;'>"
+                    f"{date_label} {time_label} · "
+                    f"<span class=\"pattern-badge\" style='font-size:0.65rem;'>{pattern}</span>"
+                    f" · {scope}</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_btn:
+                if st.button(
+                    "↩ view", key=f"hist_{i}_{h['id']}", use_container_width=True
+                ):
+                    # Re-surface stored answer — no LLM call
+                    from brain.query import QueryResult
+
+                    st.session_state.query_result = QueryResult(
+                        question=h["question"],
+                        answer=h["answer"],
+                        pattern=h["pattern"] or "—",
+                        scope=h["scope"],
+                        chunks_retrieved=h["chunks_retrieved"],
+                        dates_covered=h["dates_covered"],
+                        date_from=None,
+                        date_to=None,
+                        rationale=h["rationale"],
+                    )
+                    st.session_state.query_error = None
+                    st.rerun()
+
+            st.markdown(
+                "<div style='border-bottom:1px solid #f1f5f9;margin:0.1rem 0;'></div>",
+                unsafe_allow_html=True,
+            )
