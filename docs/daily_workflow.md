@@ -8,7 +8,10 @@
 ## The Daily Loop in 60 Seconds
 
 ```
-Morning reminder fires at 09:00
+Morning reminder fires at 09:00 (or any time based on your settings)
+    ↓
+Check for docs/ai-session-summary-prompts.md and get ai summaries
+from other ai tools
     ↓
 Drop raw notes into inputs/YYYY-MM-DD/
     ↓
@@ -24,6 +27,7 @@ brain status --detailed                     ← verify all clean
 git add + git commit                        ← public files only
     ↓
 Review todo.txt action items
+
 ```
 
 Total active time: ~10–15 minutes.

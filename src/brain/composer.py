@@ -477,6 +477,10 @@ class Composer:
                 # Ensure mood_reason present — model sometimes omits it
                 if not data.get("mood_reason"):
                     data["mood_reason"] = f"Mood: {data.get('mood', 'neutral')}."
+                # Coerce any dict items in list fields to strings
+                # llama3 sometimes returns {"Name": "Rahul", "context": "..."}
+                # instead of "Rahul — context" in people/meetings/etc.
+                data = self._coerce_list_fields(data)
                 return data
             except ValueError as e:
                 if attempt == max_attempts:
@@ -486,6 +490,99 @@ class Composer:
                     return empty
 
         return empty
+
+    def _coerce_list_fields(self, data: dict) -> dict:
+        """
+        Coerce dict items in list fields to strings.
+
+        llama3 sometimes returns structured dicts in list fields despite the
+        schema requiring plain strings. Examples seen in production:
+
+          people:    [{"Name": "Rahul", "context": "green build"}]
+          meetings:  [{"title": "Sprint Planning", "time": "10am"}]
+          blockers:  [{"issue": "infra approval", "severity": "high"}]
+
+        This method flattens them to readable strings before caching or
+        validation, so the error never reaches DailySummary Pydantic validation.
+
+        Called on every extraction result before _save_cache() writes to disk —
+        so corrupt data is never cached in the first place.
+        """
+        LIST_FIELDS = [
+            "focus_areas",
+            "projects",
+            "key_takeaways",
+            "meetings",
+            "blockers",
+            "people",
+            "references",
+        ]
+        for field in LIST_FIELDS:
+            items = data.get(field)
+            if not isinstance(items, list):
+                continue
+            fixed = []
+            for item in items:
+                if isinstance(item, dict):
+                    fixed.append(self._dict_to_str(item))
+                elif isinstance(item, str):
+                    fixed.append(item)
+                else:
+                    fixed.append(str(item))
+            data[field] = fixed
+        return data
+
+    @staticmethod
+    def _dict_to_str(d: dict) -> str:
+        """
+        Flatten a dict to a readable string.
+
+        Tries common name/title keys first, then appends context/role value.
+        Falls back to joining all values if no recognised keys found.
+
+        Examples:
+          {"Name": "Rahul", "context": "green build"} → "Rahul — green build"
+          {"title": "Sprint Planning", "time": "10am"} → "Sprint Planning — 10am"
+          {"issue": "infra approval", "severity": "high"} → "infra approval — high"
+        """
+        name_keys = [
+            "name",
+            "Name",
+            "person",
+            "Person",
+            "title",
+            "Title",
+            "meeting",
+            "issue",
+            "Issue",
+        ]
+        value_keys = [
+            "context",
+            "Context",
+            "role",
+            "Role",
+            "note",
+            "Note",
+            "description",
+            "Description",
+            "time",
+            "Time",
+            "severity",
+            "detail",
+            "Detail",
+        ]
+
+        name = next((str(d[k]) for k in name_keys if k in d), None)
+        value = next((str(d[k]) for k in value_keys if k in d), None)
+
+        if name and value:
+            return f"{name} — {value}"
+        elif name:
+            return name
+        elif len(d) == 1:
+            return str(next(iter(d.values())))
+        else:
+            return " — ".join(str(v) for v in d.values() if v)
 
     def _merge_summaries(self, summaries: list[dict]) -> dict:
         """
