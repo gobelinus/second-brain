@@ -184,13 +184,13 @@ class Composer:
         print()
 
         # ── Step 1: Collect input files ───────────────────────────────────────
-        print("  [1/5] Collecting input files...")
+        print("  [1/6] Collecting input files...")
         input_files = self._collect_inputs(inputs_path)
         for f in input_files:
             print(f"        + {f.name}")
 
         # ── Step 2: Read files individually (kept for todo extraction) ─────────
-        print("  [2/5] Reading input content...")
+        print("  [2/6] Reading input content...")
         combined_content = self._read_inputs(input_files)
         word_count = len(combined_content.split())
         print(f"        {len(input_files)} file(s), ~{word_count} words total")
@@ -198,7 +198,7 @@ class Composer:
         # ── Step 3: Two-pass LLM extraction ───────────────────────────────────
         # Pass A: extract per-file (small focused context per call)
         # Pass B: merge per-file summaries into one (tiny context, trivial task)
-        print("  [3/5] Composing summary via LLM (two-pass)...")
+        print("  [3/6] Composing summary via LLM (two-pass)...")
         summary, composed = self._call_llm_two_pass(input_files, date)
         print(f"        Mood      : {summary.mood}")
         print(f"        Projects  : {len(summary.projects)}")
@@ -206,7 +206,7 @@ class Composer:
         print(f"        Takeaways : {len(summary.key_takeaways)}")
 
         # ── Step 4: Extract action items into todo.txt ────────────────────────
-        print("  [4/5] Extracting action items...")
+        print("  [4/6] Extracting action items...")
         todo_items = self._extract_todos(date, combined_content)
         if todo_items:
             print(f"        {len(todo_items)} action item(s) found")
@@ -230,7 +230,7 @@ class Composer:
             return output_path
 
         # ── Step 5: Write output + todos + optionally archive ─────────────────
-        print("  [5/5] Writing output files...")
+        print("  [5/6] Writing output files...")
         self._write_output(output_path, composed)
         print(f"        Summary  : {output_path}")
 
@@ -242,6 +242,10 @@ class Composer:
             archive_path = self.config.composer_archive_path(date)
             self._archive_inputs(inputs_path, archive_path)
             print(f"        Archived : {archive_path}")
+
+        # ── Step 6: Suggest todo completions (non-blocking) ───────────────────
+        print("  [6/6] Checking open todos against today's summary...")
+        self._suggest_completions(output_path, date)
 
         print()
         print("  ✅ Compose complete")
@@ -862,3 +866,49 @@ class Composer:
                 continue
 
             shutil.move(str(f), str(dest))
+
+    def _suggest_completions(self, summary_path: Path, date: str) -> None:
+        """
+        Run TodoMatcher against today's composed summary and print suggestions.
+
+        Non-blocking — any failure is caught and printed as a warning.
+        Only called when not in dry_run mode.
+        """
+        try:
+            from brain.todo_matcher import TodoMatcher
+
+            matcher = TodoMatcher(self.config)
+            open_count = len(matcher.list_open())
+
+            if open_count == 0:
+                print("        No open todos to check.")
+                return
+
+            print(f"        Scanning {open_count} open todo(s)...")
+            content = summary_path.read_text(encoding="utf-8")
+            matches = matcher.match(content, date)
+
+            if not matches:
+                print("        No open todos appear addressed today.")
+                return
+
+            print(f"        {len(matches)} item(s) may have been addressed:\n")
+            for m in matches:
+                # Show id: and jira: prominently if present
+                tag_hint = ""
+                if m.todo_id:
+                    tag_hint += f"  id:{m.todo_id}"
+                if m.jira_ref:
+                    tag_hint += f"  jira:{m.jira_ref}"
+                print(f"        {m.raw_line}")
+                print(f"          ↳ {m.evidence}")
+                print()
+
+            print("        To close an item:")
+            print("          brain todo --close <id>")
+            print(
+                f"          e.g. brain todo --close {matches[0].todo_id or 'XXXXXXXX'}"
+            )
+
+        except Exception as e:
+            print(f"        ⚠️  Todo matching failed (non-blocking): {e}")

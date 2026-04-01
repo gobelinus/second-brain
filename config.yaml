@@ -240,16 +240,25 @@ composer:
     - Then the action item description
     - Add +Project tag if a project is identifiable (no spaces, CamelCase)
     - Add @context tag for context: @infra @team @review @comms @code
+    - Append a stable ID tag: id:XXXXXXXX
+        Generate the ID as the first 8 characters of the SHA-1 hash of the
+        action item description text (lowercase, strip punctuation first).
+        This makes IDs deterministic — re-extracting the same item gives
+        the same ID every time.
+    - If a Jira ticket is mentioned in the notes for this item, append: jira:TICKET-123
+    - If a Confluence page is referenced for this item, append: conf:page-slug
 
     Example output:
-    (A) {date} Fix hotfix approval request for kkumar +Anvil @review
-    (B) {date} Reduce Prod0 instances to 20 and monitor performance +Autoscaling @infra
-    (C) {date} Post daily auto-scaling summary to channel +Autoscaling @comms
+    (A) {date} Fix hotfix approval request for kkumar +Anvil @review id:3a9f2b1c jira:PLAT-1234
+    (B) {date} Reduce Prod0 instances to 20 and monitor performance +Autoscaling @infra id:7c4e8d2a
+    (C) {date} Post daily auto-scaling summary to channel +Autoscaling @comms id:b1f93e55
 
     Rules:
     - Extract ONLY concrete action items — things someone must DO
     - Do not extract observations, decisions, or status updates
     - Do not invent items not present in the notes
+    - Every item MUST have an id: tag — never omit it
+    - Only add jira:/conf: tags if the ticket or page is explicitly mentioned
     - Output ONLY the todo.txt lines. No preamble, no headers, no commentary.
 
     SOURCE NOTES:

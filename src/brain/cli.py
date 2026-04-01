@@ -1050,6 +1050,172 @@ def anonymize(
     typer.echo("\n✅ Done.\n", err=True)
 
 
+# ── Todo command ──────────────────────────────────────────────────────────────
+
+
+@app.command()
+def todo(
+    list_todos: Annotated[
+        bool,
+        typer.Option("--list", help="List open todos."),
+    ] = False,
+    all_todos: Annotated[
+        bool,
+        typer.Option("--all", help="Include completed todos when listing."),
+    ] = False,
+    close: Annotated[
+        str | None,
+        typer.Option(
+            "--close",
+            help="Close a todo by its id: tag value (e.g. --close a3f291).",
+        ),
+    ] = None,
+    suggest: Annotated[
+        bool,
+        typer.Option(
+            "--suggest",
+            help="Run matcher against most recent sensitive summary.",
+        ),
+    ] = False,
+    include_medium: Annotated[
+        bool,
+        typer.Option(
+            "--medium",
+            help="Include medium-confidence matches in suggestions.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Todo** — manage and review your action items.
+
+    Run after compose to check suggestions, or use standalone to list
+    and close items.
+
+    Examples:
+
+        brain todo --list
+
+        brain todo --list --all
+
+        brain todo --close a3f291
+
+        brain todo --suggest
+
+        brain todo --suggest --medium
+    """
+    from datetime import date as date_type
+
+    from brain.todo_matcher import TodoMatcher
+
+    _print_header("Todo")
+    cfg = _get_config()
+
+    try:
+        matcher = TodoMatcher(cfg)
+
+        # ── --close ───────────────────────────────────────────────────────────
+        if close:
+            today = date_type.today().isoformat()
+            found = matcher.close_todo(close, today)
+            if found:
+                typer.echo(f"\n✅ Closed todo id:{close} (marked x {today})")
+            else:
+                typer.echo(
+                    f"\n❌ No open todo found with id:{close}\n"
+                    f"   Run 'brain todo --list' to see open items.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+        # ── --list ────────────────────────────────────────────────────────────
+        elif list_todos:
+            open_lines, done_lines = matcher.list_all()
+
+            typer.echo(f"\n📋 Open todos ({len(open_lines)})")
+            typer.echo("─" * 40)
+            if open_lines:
+                for line in open_lines:
+                    typer.echo(f"  {line}")
+            else:
+                typer.echo("  (none)")
+
+            if all_todos and done_lines:
+                typer.echo(f"\n✅ Completed ({len(done_lines)})")
+                typer.echo("─" * 40)
+                for line in done_lines:
+                    typer.echo(f"  {line}")
+
+        # ── --suggest ─────────────────────────────────────────────────────────
+        elif suggest:
+            # Find most recent sensitive summary
+            sensitive_dir = cfg.daily_sensitive
+            if not sensitive_dir.exists():
+                typer.echo(
+                    "\n❌ No sensitive summaries found.\n"
+                    "   Run brain compose --date YYYY-MM-DD first.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            summaries = sorted(sensitive_dir.glob("*.md"), reverse=True)
+            if not summaries:
+                typer.echo(
+                    "\n❌ No summaries found in daily/sensitive/\n"
+                    "   Run brain compose --date YYYY-MM-DD first.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            latest = summaries[0]
+            # Extract date from filename YYYY-MM-DD.md
+            date_str = latest.stem
+
+            typer.echo(f"\n   Summary : {latest.name}")
+            typer.echo(f"   Open    : {len(matcher.list_open())} todo(s)")
+            typer.echo()
+
+            open_count = len(matcher.list_open())
+            if open_count == 0:
+                typer.echo("   No open todos — nothing to check.")
+            else:
+                typer.echo(f"   Scanning {open_count} open todo(s)...\n")
+                content = latest.read_text(encoding="utf-8")
+                matches = matcher.match(content, date_str, include_medium)
+
+                if not matches:
+                    typer.echo("   No open todos appear addressed in this summary.")
+                else:
+                    typer.echo(f"   {len(matches)} item(s) may have been addressed:\n")
+                    for m in matches:
+                        conf_label = "●" if m.confidence == "high" else "○"
+                        typer.echo(f"   {conf_label} {m.raw_line}")
+                        typer.echo(f"     ↳ {m.evidence}")
+                        typer.echo()
+
+                    typer.echo("   To close:")
+                    typer.echo("     brain todo --close <id>")
+                    if matches[0].todo_id:
+                        typer.echo(f"     e.g. brain todo --close {matches[0].todo_id}")
+
+        # ── no flag — show help hint ──────────────────────────────────────────
+        else:
+            open_lines = matcher.list_open()
+            typer.echo(f"\n   {len(open_lines)} open todo(s) in {cfg.todo_txt.name}")
+            typer.echo()
+            typer.echo("   brain todo --list          show open todos")
+            typer.echo("   brain todo --list --all    include completed")
+            typer.echo("   brain todo --suggest       check against latest summary")
+            typer.echo("   brain todo --close <id>    mark item done")
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
