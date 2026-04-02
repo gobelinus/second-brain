@@ -743,3 +743,122 @@ mcp:
       - Be specific — use names, ticket IDs, dates from the context
       - If a section has no data, write "None found" — do not omit the section
       - Output only the markdown. No preamble, no commentary.
+
+# -----------------------------------------------------------------------------
+# Dump — Daily raw note parser
+#
+# brain dump --date YYYY-MM-DD
+#
+# Reads all daily_*.md files from inputs/YYYY-MM-DD/
+# Parses H2 sections, classifies by type, writes structured files.
+#
+# Section classification (case-insensitive keyword matching):
+#   1. Check task_keywords    → Task section
+#   2. Check pr_keywords      → PR Review section
+#   3. Check meeting_keywords → Meeting section
+#   4. No match               → Other (catch-all, never lost)
+#
+# Idempotency:
+#   Existing output files are SKIPPED with a warning.
+#   Original daily_*.md files are NEVER modified.
+#   Safe to re-run — protects meeting skeletons you've already filled.
+# -----------------------------------------------------------------------------
+dump:
+
+  # Glob pattern for input files within inputs/YYYY-MM-DD/
+  # Matches: daily_dump.md, daily_tasks.md, daily_meets.md etc.
+  input_glob: "daily_*.md"
+
+  # Section type classification — case-insensitive substring match on H2 title
+  # Add keywords here without touching code.
+  section_types:
+    task_keywords:
+      - "task"
+      - "ticket"
+      - "fix"
+      - "bug"
+      - "feature"
+      - "chore"
+      - "spike"
+      - "investigation"
+
+    pr_keywords:
+      - "pr"
+      - "pull request"
+      - "pull req"
+      - "review"
+      - "code review"
+
+    meeting_keywords:
+      - "meet"
+      - "meeting"
+      - "standup"
+      - "stand-up"
+      - "stand up"
+      - "sync"
+      - "1:1"
+      - "one on one"
+      - "call"
+      - "retro"
+      - "retrospective"
+      - "demo"
+      - "planning"
+      - "grooming"
+      - "refinement"
+
+  # Output filenames — slugified section titles are appended
+  # e.g. task-ef-route53-txt-record.md, meet-platform-sync.md
+  output_prefixes:
+    task: "task-"
+    pr: "pr-reviews"       # all PR sections merged into one file
+    meeting: "meet-"
+    other: "misc-"
+
+  # PR sections are merged into a single file (they're usually short bullets)
+  pr_merge_file: "pr-reviews.md"
+
+  # Meeting skeleton template
+  # Placeholders: {title}, {date}, {source_file}
+  meeting_skeleton_template: |
+    # Meeting: {title} — {date}
+
+    > **Source:** {source_file}
+    > **Status:** ⏳ Fill your notes before running `brain compose`
+
+    ## Attendees
+    <!-- fill in -->
+
+    ## Context
+    {original_notes}
+
+    ## Notes
+    <!-- your notes here -->
+
+    ## Decisions
+    <!-- any decisions made -->
+
+    ## Action Items
+    <!-- follow-ups — these will be picked up by todo extraction -->
+
+  # Task file template
+  # Placeholders: {title}, {date}, {source_file}, {jira_tags}, {original_notes}
+  task_file_template: |
+    # Task: {title} — {date}
+
+    > **Source:** {source_file}
+    {jira_tags}
+
+    ## Notes
+    {original_notes}
+
+    ## Outcome
+    <!-- what was the result / what did you learn -->
+
+  # Other/catch-all file template
+  # Placeholders: {title}, {date}, {source_file}, {original_notes}
+  other_file_template: |
+    # {title} — {date}
+
+    > **Source:** {source_file}
+
+    {original_notes}
