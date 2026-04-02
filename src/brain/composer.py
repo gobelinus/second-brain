@@ -30,6 +30,8 @@ Flow:
 import json
 import re
 import shutil
+from datetime import date as date_type
+from datetime import timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +45,64 @@ from brain.config import BrainConfig
 SentimentType = Literal[
     "productive", "frustrated", "neutral", "overwhelmed", "energized"
 ]
+
+
+def _add_business_days(start: date_type, days: int) -> date_type:
+    """
+    Add `days` business days (Mon-Fri) to `start` date.
+    Skips Saturday (5) and Sunday (6).
+    Returns start unchanged if days is 0.
+    """
+    if days == 0:
+        return start
+    current = start
+    added = 0
+    while added < days:
+        current = current + timedelta(days=1)
+        if current.weekday() < 5:  # Mon=0 … Fri=4
+            added += 1
+    return current
+
+
+def _inject_due_date(line: str, start: date_type, offsets: dict) -> str:
+    """
+    Inject a due:YYYY-MM-DD tag into a todo.txt line based on priority.
+
+    Priority is read from the first character inside the leading parentheses.
+    If no priority is detected, the line is returned unchanged.
+    If the offset for that priority is 0, no due: tag is added.
+
+    Due tag is appended at the end of the line — after all other tags.
+    If a due: tag already exists (LLM snuck one in), it is replaced.
+
+    Examples:
+        "(A) 2026-04-02 Fix thing @review @d:2026-04-02"
+        → "(A) 2026-04-02 Fix thing @review @d:2026-04-02 due:2026-04-04"
+
+        "(C) 2026-04-02 Nice to have @comms @d:2026-04-02"
+        → "(C) 2026-04-02 Nice to have @comms @d:2026-04-02"   (unchanged)
+    """
+    import re
+
+    # Detect priority — "(A)", "(B)", "(C)" at start of line
+    priority_match = re.match(r"^\(([A-Z])\)", line.strip())
+    if not priority_match:
+        return line
+
+    priority = priority_match.group(1)
+    offset = offsets.get(priority, 0)
+
+    if offset == 0:
+        return line
+
+    # Strip any existing due: tag the LLM may have added
+    line = re.sub(r"\s+due:\S+", "", line).rstrip()
+
+    # Calculate due date
+    due_date = _add_business_days(start, offset)
+    due_str = due_date.isoformat()
+
+    return f"{line} due:{due_str}"
 
 
 class DailySummary(BaseModel):
@@ -830,19 +890,36 @@ class Composer:
         """
         Append extracted todo items to the rolling todo.txt file.
 
-        Each item already carries an @d:{date} tag from the extraction prompt,
-        so no separate date header is needed. Items are written as a plain
-        consecutive block — fully todo.txt spec compliant.
+        Injects a due: tag on each item based on priority and configured
+        business day offsets:
+          (A) → due in 2 business days
+          (B) → due in 4 business days
+          (C) → no due date
+
+        Each item already carries @d:{date} from the extraction prompt.
+        Items are written as a plain consecutive block — todo.txt spec compliant.
 
         Format:
-            (A) 2026-04-02 Fix hotfix approval +Anvil @review @d:2026-04-02
-            (B) 2026-04-02 Reduce Prod0 instances +Autoscaling @infra @d:2026-04-02
+            (A) 2026-04-02 Fix hotfix +Anvil @review @d:2026-04-02 due:2026-04-04
+            (B) 2026-04-02 Reduce instances +Autoscaling @infra @d:2026-04-02 due:2026-04-08
+            (C) 2026-04-02 Post summary +Autoscaling @comms @d:2026-04-02
         """
         todo_path = self.config.todo_txt
         todo_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Plain block — no # header, @d:{date} tag carries the date context
-        block = "\n".join(todo_items) + "\n"
+        # Load due date offsets from config
+        offsets: dict = self.config.composer_due_date_offsets
+        try:
+            start = date_type.fromisoformat(date)
+        except ValueError:
+            # Bad date — write items as-is, don't block the workflow
+            start = date_type.today()
+
+        enriched: list[str] = []
+        for line in todo_items:
+            enriched.append(_inject_due_date(line, start, offsets))
+
+        block = "\n".join(enriched) + "\n"
 
         with open(todo_path, "a", encoding="utf-8") as f:
             f.write(block)

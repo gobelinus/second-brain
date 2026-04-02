@@ -164,6 +164,13 @@ composer:
   # Archive processed inputs after successful compose
   archive_after_compose: true
 
+  # Due date offsets for todo.txt extraction (business days, Mon-Fri)
+  # Priority C gets no due date — nice-to-have items shouldn't have deadlines
+  due_date_offsets:
+    A: 2    # urgent — due within 2 business days
+    B: 4    # important — due within 4 business days
+    C: 0    # no due date
+
   # LLM prompt template — {date} and {content} are injected at runtime
   prompt_template: |
     IMPORTANT: Your response MUST start with exactly this line:
@@ -243,9 +250,10 @@ composer:
     - Add @d:{date} as the last tag on every line — this is the date context tag
 
     Example output:
-    (A) {date} Fix hotfix approval request for kkumar +Anvil @review @d:{date}
-    (B) {date} Reduce Prod0 instances to 20 and monitor performance +Autoscaling @infra @d:{date}
+    (A) {date} Fix hotfix approval request for kkumar +Anvil @review @d:{date} due:YYYY-MM-DD
+    (B) {date} Reduce Prod0 instances to 20 and monitor +Autoscaling @infra @d:{date} due:YYYY-MM-DD
     (C) {date} Post daily auto-scaling summary to channel +Autoscaling @comms @d:{date}
+
 
     Rules:
     - Extract ONLY concrete action items — things someone must DO
@@ -253,6 +261,7 @@ composer:
     - Do not invent items not present in the notes
     - NEVER output markdown headers (# or ##) — only todo.txt lines
     - NEVER output blank lines between items
+    - Do NOT calculate or include due: dates — the system adds them automatically
     - Output ONLY the todo.txt lines. No preamble, no headers, no commentary.
 
     SOURCE NOTES:

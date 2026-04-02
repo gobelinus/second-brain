@@ -323,6 +323,21 @@ class BrainConfig:
         return self._cfg.get("composer", {}).get("todo_prompt_template", "")
 
     @property
+    def composer_due_date_offsets(self) -> dict:
+        """
+        Business day offsets for todo.txt due date injection.
+        Keys: "A", "B", "C" — values: int (0 = no due date).
+        """
+        return self._cfg.get("composer", {}).get(
+            "due_date_offsets",
+            {
+                "A": 2,
+                "B": 4,
+                "C": 0,
+            },
+        )
+
+    @property
     def todo_txt(self) -> Path:
         """Path to the rolling todo.txt file at project root."""
         return ROOT / self._cfg["paths"].get("todo_txt", "todo.txt")
