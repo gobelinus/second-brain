@@ -829,16 +829,20 @@ class Composer:
     def _append_todos(self, date: str, todo_items: list[str]) -> Path:
         """
         Append extracted todo items to the rolling todo.txt file.
-        Adds a date separator comment before each day's items.
+
+        Each item already carries an @d:{date} tag from the extraction prompt,
+        so no separate date header is needed. Items are written as a plain
+        consecutive block — fully todo.txt spec compliant.
 
         Format:
-            # 2026-03-10
-            (A) 2026-03-10 Fix hotfix approval +Anvil @review
+            (A) 2026-04-02 Fix hotfix approval +Anvil @review @d:2026-04-02
+            (B) 2026-04-02 Reduce Prod0 instances +Autoscaling @infra @d:2026-04-02
         """
         todo_path = self.config.todo_txt
         todo_path.parent.mkdir(parents=True, exist_ok=True)
 
-        block = f"\n# {date}\n" + "\n".join(todo_items) + "\n"
+        # Plain block — no # header, @d:{date} tag carries the date context
+        block = "\n".join(todo_items) + "\n"
 
         with open(todo_path, "a", encoding="utf-8") as f:
             f.write(block)
