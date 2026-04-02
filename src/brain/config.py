@@ -480,3 +480,74 @@ class BrainConfig:
     def blogs_sensitive_path(self) -> Path:
         """Path to blogs/sensitive/ — git-ignored sensitive blog posts."""
         return self._root / self._cfg["paths"]["blogs_sensitive"]
+
+    # ── Dump ──────────────────────────────────────────────────────────────────────
+
+    @property
+    def dump_input_glob(self) -> str:
+        """Glob pattern for daily input files. e.g. daily_*.md"""
+        return self._cfg.get("dump", {}).get("input_glob", "daily_*.md")
+
+    @property
+    def dump_task_keywords(self) -> list[str]:
+        """Lowercase keywords that classify an H2 section as a Task."""
+        return (
+            self._cfg.get("dump", {})
+            .get("section_types", {})
+            .get("task_keywords", ["task", "ticket", "fix", "bug"])
+        )
+
+    @property
+    def dump_pr_keywords(self) -> list[str]:
+        """Lowercase keywords that classify an H2 section as a PR Review."""
+        return (
+            self._cfg.get("dump", {})
+            .get("section_types", {})
+            .get("pr_keywords", ["pr", "pull request", "review"])
+        )
+
+    @property
+    def dump_meeting_keywords(self) -> list[str]:
+        """Lowercase keywords that classify an H2 section as a Meeting."""
+        return (
+            self._cfg.get("dump", {})
+            .get("section_types", {})
+            .get("meeting_keywords", ["meet", "standup", "sync", "1:1", "call"])
+        )
+
+    @property
+    def dump_pr_merge_file(self) -> str:
+        """Filename for the merged PR review output."""
+        return self._cfg.get("dump", {}).get("pr_merge_file", "pr-reviews.md")
+
+    @property
+    def dump_output_prefixes(self) -> dict[str, str]:
+        """Output filename prefixes per section type."""
+        return self._cfg.get("dump", {}).get(
+            "output_prefixes",
+            {
+                "task": "task-",
+                "pr": "pr-reviews",
+                "meeting": "meet-",
+                "other": "misc-",
+            },
+        )
+
+    @property
+    def dump_meeting_skeleton_template(self) -> str:
+        """Meeting skeleton markdown template."""
+        return self._cfg.get("dump", {}).get("meeting_skeleton_template", "")
+
+    @property
+    def dump_task_file_template(self) -> str:
+        """Task output markdown template."""
+        return self._cfg.get("dump", {}).get("task_file_template", "")
+
+    @property
+    def dump_other_file_template(self) -> str:
+        """Catch-all output markdown template."""
+        return self._cfg.get("dump", {}).get("other_file_template", "")
+
+    def dump_inputs_path(self, date: str) -> Path:
+        """Path to the inputs folder for a given date. e.g. inputs/2026-04-02/"""
+        return self.inputs / date
