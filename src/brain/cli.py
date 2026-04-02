@@ -4,6 +4,7 @@ cli.py — Brain CLI entrypoint.
 Built with Typer. Exposes clean, memorable commands:
   brain ingest    — ingest a daily markdown summary
   brain compose   — combine input files into a structured summary
+  brain dump      — parse raw daily_*.md notes into structured inputs
   brain remind    — manage the daily reminder system
   brain query     — semantic query across your brain (Phase 3 ✅)
   brain trend     — structured trend queries via SQLite (Phase 2)
@@ -21,6 +22,7 @@ import typer
 
 from brain.composer import Composer
 from brain.config import BrainConfig
+from brain.dump import DumpParser
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
 from brain.query import RAGEngine
@@ -245,6 +247,90 @@ def compose(
                 err=True,
             )
             raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def dump(
+    date: Annotated[
+        str,
+        typer.Option(
+            "--date",
+            "-d",
+            help="Date to parse input files for (YYYY-MM-DD).",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview what would be written without creating any files.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Dump** — parse raw daily notes into structured input files.
+
+    Reads all daily_*.md files from inputs/YYYY-MM-DD/, splits them into
+    H2 sections, classifies each section by type, and writes structured
+    files ready for brain compose.
+
+    Section types detected:
+
+    - 📋 **Task** — writes task-<slug>.md with Jira tag if ticket detected
+    - 🔀 **PR Review** — all PR sections merged into pr-reviews.md
+    - 🤝 **Meeting** — writes meet-<slug>.md skeleton for you to fill
+    - 📎 **Other** — catch-all misc-<slug>.md, nothing is lost
+
+    Existing files are skipped with a warning — safe to re-run.
+    Your filled meeting skeletons are never overwritten.
+
+    Typical daily workflow:
+
+        1. Drop daily_dump.md into inputs/2026-04-02/
+
+        2. brain dump --date 2026-04-02
+
+        3. Fill any meet-*.md skeletons with your notes
+
+        4. brain compose --date 2026-04-02 --ingest
+
+    Examples:
+
+        brain dump --date 2026-04-02
+
+        brain dump --date 2026-04-02 --dry-run
+    """
+    _print_header("Daily Dump Parser")
+
+    cfg = _get_config()
+
+    try:
+        parser = DumpParser(cfg)
+        result = parser.parse(date=date, dry_run=dry_run)
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except ValueError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error during dump: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # ── Exit non-zero if nothing was written (all skipped) ────────────────────
+    # This lets cron/CI detect a no-op run if needed.
+    if result.sections and not result.written and not dry_run:
+        typer.echo(
+            "\n⚠️  All output files already exist — nothing written.\n"
+            "   Delete the files you want regenerated and re-run.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
     typer.echo("\n✅ Done.\n")
 
