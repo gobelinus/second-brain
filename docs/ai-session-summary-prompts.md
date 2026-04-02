@@ -36,12 +36,14 @@ You are pulling value out of interactions that already happened.
 Paste this at the end of your Claude conversation for the day:
 
 ```
-Before this conversation ends, I need you to summarise our entire session
-today for my personal knowledge system.
+Before this conversation ends, summarise our entire session today for my
+personal knowledge system.
 
-Review everything we discussed in this conversation and produce a structured
-markdown summary. Be specific — include actual technical details, decisions
-made, problems solved, and things learned. Do not be vague or generic.
+CRITICAL RULE: Only include a section if there is real content from our
+conversation to put in it. If a section does not apply to what we actually
+discussed, OMIT IT ENTIRELY — do not write the heading, do not write
+"N/A", do not write "None". A missing section is correct. A fabricated
+or placeholder section is not.
 
 Output ONLY the markdown below, starting immediately with the heading.
 No preamble. No "here is your summary". Just the content.
@@ -51,32 +53,35 @@ No preamble. No "here is your summary". Just the content.
 # Claude Session Notes — [TODAY'S DATE]
 
 ## What We Worked On
-[Bullet list — specific tasks, problems, questions we tackled together]
+(include only if we worked on something concrete — specific tasks,
+problems, or questions we tackled together)
 
 ## Key Decisions Made
-[Bullet list — technical or design choices made during this session,
-with the reasoning if it came up]
+(include only if actual decisions or technical choices were made —
+with brief reasoning if it came up)
 
 ## Things I Learned / Insights
-[Bullet list — new concepts, approaches, or perspectives from this session]
+(include only if genuinely new concepts, approaches, or perspectives
+came up — not restatements of what I already knew)
 
 ## Code / Solutions Produced
-[Brief description of any code written, commands run, or concrete outputs.
-Include language/technology. No need to paste the full code — describe what it does.]
+(include only if real code was written, commands were run, or concrete
+technical outputs were produced — describe what it does, language/tech used)
 
 ## Problems Still Open
-[Bullet list — anything unresolved, deferred, or that needs follow-up]
+(include only if something was explicitly left unresolved or deferred)
 
 ## Action Items
-[Bullet list — concrete things I should do next, in todo.txt style if possible:
-(A) = urgent, (B) = important, (C) = nice to have]
+(include only if there are concrete follow-up tasks — use todo.txt style:
+(A) = urgent, (B) = important, (C) = nice to have)
 
 ## Topics / Technologies Referenced
-[Bullet list — tools, frameworks, services, concepts that came up]
+(include only if specific tools, frameworks, services, or technical
+concepts came up that are worth capturing)
 
 ## Mood / Energy
-[One word: productive / energized / neutral / frustrated / overwhelmed]
-[One sentence: why]
+(always include — one word: productive / energized / neutral /
+frustrated / overwhelmed, then one sentence explaining why)
 ```
 
 ---
@@ -86,12 +91,14 @@ Include language/technology. No need to paste the full code — describe what it
 Paste this at the end of your Gemini conversation for the day:
 
 ```
-Before we finish, please summarise our entire conversation today for my
+Before we finish, summarise our entire conversation today for my
 personal knowledge system.
 
-Go back through everything we discussed and produce a structured markdown
-summary. Be specific and detailed — include actual technical content,
-decisions, problems solved, and things learned. Avoid generic descriptions.
+CRITICAL RULE: Only include a section if there is real content from our
+conversation to put in it. If a section does not apply to what we actually
+discussed, OMIT IT ENTIRELY — do not write the heading, do not write
+"N/A", do not write "None". A missing section is correct. A fabricated
+or placeholder section is not.
 
 Output ONLY the markdown, starting immediately with the heading.
 No introduction. No commentary. Just the content.
@@ -101,32 +108,35 @@ No introduction. No commentary. Just the content.
 # Gemini Session Notes — [TODAY'S DATE]
 
 ## What We Worked On
-[Bullet list — specific tasks, problems, questions we tackled together]
+(include only if we worked on something concrete — specific tasks,
+problems, or questions we tackled together)
 
 ## Key Decisions Made
-[Bullet list — technical or design choices made during this session,
-with the reasoning if it came up]
+(include only if actual decisions or technical choices were made —
+with brief reasoning if it came up)
 
 ## Things I Learned / Insights
-[Bullet list — new concepts, approaches, or perspectives from this session]
+(include only if genuinely new concepts, approaches, or perspectives
+came up — not restatements of what I already knew)
 
 ## Code / Solutions Produced
-[Brief description of any code written, commands run, or concrete outputs.
-Include language/technology. No need to paste the full code — describe what it does.]
+(include only if real code was written, commands were run, or concrete
+technical outputs were produced — describe what it does, language/tech used)
 
 ## Problems Still Open
-[Bullet list — anything unresolved, deferred, or that needs follow-up]
+(include only if something was explicitly left unresolved or deferred)
 
 ## Action Items
-[Bullet list — concrete things I should do next, in todo.txt style if possible:
-(A) = urgent, (B) = important, (C) = nice to have]
+(include only if there are concrete follow-up tasks — use todo.txt style:
+(A) = urgent, (B) = important, (C) = nice to have)
 
 ## Topics / Technologies Referenced
-[Bullet list — tools, frameworks, services, concepts that came up]
+(include only if specific tools, frameworks, services, or technical
+concepts came up that are worth capturing)
 
 ## Mood / Energy
-[One word: productive / energized / neutral / frustrated / overwhelmed]
-[One sentence: why]
+(always include — one word: productive / energized / neutral /
+frustrated / overwhelmed, then one sentence explaining why)
 ```
 
 ---
@@ -136,14 +146,16 @@ Include language/technology. No need to paste the full code — describe what it
 For ChatGPT, Copilot, Perplexity, or any other tool you use:
 
 ```
-Before this conversation ends, please summarise our entire session today
-for my personal notes.
+Before this conversation ends, summarise our entire session today for
+my personal notes.
 
-Review everything we discussed and produce a structured markdown summary.
-Be specific — include actual technical details, real decisions made, concrete
-problems solved, and genuine insights. Not vague descriptions.
+CRITICAL RULE: Only include a section if there is real content from our
+conversation to put in it. If a section does not apply to what we actually
+discussed, OMIT IT ENTIRELY — do not write the heading, do not write
+"N/A", do not write "None". A missing section is correct. A fabricated
+or placeholder section is not.
 
-Output ONLY the markdown below. Start immediately with the heading.
+Output ONLY the markdown. Start immediately with the heading.
 No preamble. No "sure, here is your summary". Just the content.
 
 ---
@@ -151,54 +163,57 @@ No preamble. No "sure, here is your summary". Just the content.
 # [TOOL NAME] Session Notes — [TODAY'S DATE]
 
 ## What We Worked On
-[Bullet list — specific tasks and problems]
+(include only if we worked on something concrete)
 
 ## Key Decisions Made
-[Bullet list — choices and reasoning]
+(include only if actual decisions were made — with reasoning)
 
 ## Things I Learned / Insights
-[Bullet list — new knowledge from this session]
+(include only if genuinely new knowledge came up)
 
 ## Code / Solutions Produced
-[What was built or solved — language, purpose, approach]
+(include only if real code or concrete technical output was produced)
 
 ## Problems Still Open
-[Unresolved questions or deferred items]
+(include only if something was left unresolved or deferred)
 
 ## Action Items
-[Next steps — (A) urgent / (B) important / (C) nice to have]
+(include only if there are concrete follow-up tasks —
+(A) urgent / (B) important / (C) nice to have)
 
 ## Topics / Technologies Referenced
-[Tools, frameworks, concepts that came up]
+(include only if specific tools, frameworks, or concepts came up)
 
 ## Mood / Energy
-[One word from: productive / energized / neutral / frustrated / overwhelmed]
-[One sentence: why]
+(always include — one word: productive / energized / neutral /
+frustrated / overwhelmed, then one sentence explaining why)
 ```
 
 ---
 
 ## Tips
 
-**Be honest in the Mood field.** The whole point of the brain project is
-that it reflects what actually happened, not a sanitised version. The
-sentiment trending over time is only useful if it's accurate.
+**Mood / Energy is the only mandatory section.** Everything else is
+omitted if it doesn't apply. A session that was purely exploratory
+discussion might only have "What We Worked On" and "Mood". That's correct.
+
+**"CRITICAL RULE" wording is intentional.** LLMs respond to strong
+framing. Without it, the model interprets the section template as a form
+to fill in, and hallucinates content to complete empty fields. The rule
+reframes sections as conditional — only emit what actually happened.
 
 **Don't clean up Action Items before saving.** Leave them rough — the
 composer's todo extraction prompt will format them into todo.txt syntax.
-If they're already clean that's fine too.
 
-**One file per tool is the right granularity.** Don't try to merge Claude
-and Gemini outputs yourself — drop both files and let the composer LLM do it.
-That's what it's for.
+**One file per tool is the right granularity.** Don't merge Claude and
+Gemini outputs yourself — drop both files and let the composer LLM do it.
 
-**If a session was trivial, say so.** A session about asking for a recipe
-or debugging a trivial typo doesn't need a summary. Skip it. The value is
-in capturing the sessions where you actually thought through something.
+**If a session was trivial, skip it.** A session about asking for a recipe
+or debugging a trivial typo doesn't need a summary. The value is in
+capturing sessions where you actually thought through something.
 
 **The date in the filename matters.** The composer reads all files from
-`inputs/YYYY-MM-DD/` — whatever date you use in the folder name is the
-date the summary gets stored under. Use today's date.
+`inputs/YYYY-MM-DD/` — use today's date consistently.
 
 ---
 

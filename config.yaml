@@ -657,3 +657,89 @@ query:
     - "most common"
     - "least common"
     - "average"
+
+# -----------------------------------------------------------------------------
+# MCP — External integrations via Model Context Protocol
+#
+# Phase 5b — Task Enrichment
+# brain task --enrich PLAT-1234
+# brain task --enrich id:a3f291
+#
+# Privacy boundary:
+#   External data (Jira, Confluence) is fetched via MCP.
+#   Local brain notes stay local.
+#   Final brief is assembled by local Ollama — the two never meet on a cloud server.
+#
+# Graceful degradation:
+#   If a server is disabled or unreachable, the command continues
+#   with local brain context only. A partial brief > a broken command.
+# -----------------------------------------------------------------------------
+mcp:
+
+  # Jira — ticket details, comments, linked PRs
+  jira:
+    enabled: true
+    server_url: "https://mcp.atlassian.com/mcp"   # Atlassian-hosted MCP endpoint
+    # ticket_id_pattern: regex used by task resolver to detect Jira refs
+    # Covers: CS-15011, ENG-123509, IMPL-1267, PROJ-1 etc.
+    ticket_id_pattern: "[A-Z]{2,9}-\\d+"
+
+  # Confluence — linked design docs and runbooks
+  confluence:
+    enabled: true
+    server_url: "https://mcp.atlassian.com/mcp"   # same Atlassian MCP endpoint
+
+  # Task enrichment settings
+  task:
+    # Max semantic chunks pulled from ChromaDB for brain context
+    brain_context_top_k: 5
+
+    # Max SQLite rows returned for people/blocker enrichment
+    brain_context_max_rows: 10
+
+    # Where --ingest writes the enrichment brief
+    # {date} injected at runtime — lands in inputs/YYYY-MM-DD/
+    ingest_filename_template: "task-{ticket_id}.md"
+
+    # LLM prompt for assembling the final brief
+    # Placeholders: {external_context}, {brain_context}, {task_ref}
+    brief_prompt_template: |
+      You are assembling a concise task brief for an engineering team member.
+      You have two sources of context:
+        1. External context — from Jira and Confluence (what the ticket says)
+        2. Brain context — from personal work notes (what actually happened)
+
+      Your job is to synthesise these into a clear, actionable 1-page brief.
+
+      Output EXACTLY this structure:
+
+      ## Task Brief — {task_ref}
+
+      ### What Is This Task?
+      [2-3 sentences summarising the ticket purpose and current status]
+
+      ### Key People & Teams
+      [Bullet list of people and teams involved — from both sources]
+
+      ### History in Your Notes
+      [What your personal notes say about this task — dates worked, blockers encountered,
+       decisions made. Reference specific dates where possible.]
+
+      ### Current Blockers
+      [Any active blockers — from ticket comments or personal notes]
+
+      ### Suggested Next Actions
+      [2-3 concrete next steps based on the combined context]
+
+      ---
+      EXTERNAL CONTEXT (Jira / Confluence):
+      {external_context}
+
+      ---
+      BRAIN CONTEXT (Personal Notes):
+      {brain_context}
+
+      Rules:
+      - Be specific — use names, ticket IDs, dates from the context
+      - If a section has no data, write "None found" — do not omit the section
+      - Output only the markdown. No preamble, no commentary.
