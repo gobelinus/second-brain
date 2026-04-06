@@ -186,6 +186,84 @@ class ConfluencePage:
 
 
 @dataclass
+class GitHubPR:
+    """
+    Structured representation of a GitHub Pull Request with review comments.
+
+    Fields
+    ──────
+    pr_number      : PR number as string e.g. "103018"
+    title          : PR title
+    url            : full GitHub URL
+    repo           : "org/repo" format
+    status         : "open" | "merged" | "closed"
+    author         : PR author GitHub username
+    base_branch    : target branch e.g. "main"
+    head_branch    : source branch
+    files_changed  : number of files changed
+    my_comments    : review comments authored by the configured github.username
+    my_verdict     : "approved" | "changes_requested" | "commented" | "pending"
+    open_threads   : comments with OPEN resolution status — need follow-up
+    description    : PR body (truncated)
+
+    Note: PR comment content comes from the external script output files
+    (pr-NNNN-comments.md), not from this MCP call. This dataclass carries
+    MCP-fetched metadata only — title, status, file count etc.
+    The two sources are combined in enricher.py.
+    """
+
+    pr_number: str
+    title: str = ""
+    url: str = ""
+    repo: str = ""
+    status: str = ""
+    author: str = ""
+    base_branch: str = ""
+    head_branch: str = ""
+    files_changed: int = 0
+    my_comments: list[str] = field(default_factory=list)
+    my_verdict: str = ""
+    open_threads: int = 0
+    description: str = ""
+
+    def to_context_block(self) -> str:
+        """
+        Render PR metadata as a clean markdown context block for LLM consumption.
+        Combined with external script comment content in enricher.py.
+        """
+        lines = [
+            f"## GitHub PR #{self.pr_number} — {self.title}",
+            "",
+            "| Field | Value |",
+            "|---|---|",
+            f"| Status | {self.status or '—'} |",
+            f"| Repo | {self.repo or '—'} |",
+            f"| Author | {self.author or '—'} |",
+            f"| Base branch | {self.base_branch or '—'} |",
+            f"| Head branch | {self.head_branch or '—'} |",
+            f"| Files changed | {self.files_changed} |",
+            f"| My verdict | {self.my_verdict or 'pending'} |",
+            f"| Open threads | {self.open_threads} |",
+        ]
+
+        if self.url:
+            lines.append(f"| URL | {self.url} |")
+
+        if self.description:
+            preview = self.description[:400]
+            if len(self.description) > 400:
+                preview += "..."
+            lines.append(f"\n### PR Description\n\n{preview}")
+
+        if self.my_comments:
+            lines.append(f"\n### My Review Comments ({len(self.my_comments)})\n")
+            for comment in self.my_comments:
+                lines.append(f"- {comment[:200]}")
+
+        return "\n".join(lines)
+
+
+@dataclass
 class MCPCallResult:
     """
     Raw result from a single MCP tool call.
@@ -429,6 +507,125 @@ class MCPClient:
             server_url=self.config.mcp_confluence_server_url,
             tool_name="confluence_search",
             arguments={"query": "type = page", "max_results": 1},
+        )
+        return result.success
+
+    # ── GitHub MCP ────────────────────────────────────────────────────────────
+    # Phase 6b placeholder — GitHub MCP via GitHub Copilot endpoint.
+    # Currently disabled (github.mcp.enabled: false in config).
+    # PR comment content comes from the external script, not MCP.
+    # These methods fetch PR metadata only: title, status, verdict, file count.
+
+    def get_github_pr(self, pr_number: str, repo: str = "") -> "GitHubPR | None":
+        """
+        Fetch PR metadata from GitHub MCP.
+
+        Does NOT fetch full comment threads — those come from the external
+        PR comment script (pr-NNNN-comments.md files). This call fetches
+        only: title, status, author, branch info, file count, my verdict.
+
+        Args:
+            pr_number : PR number string e.g. "103018"
+            repo      : "org/repo" format. If empty, uses github.default_repo
+                        from config.local.yaml. Raises ValueError if neither set.
+
+        Returns:
+            GitHubPR with metadata populated.
+            None if: GitHub MCP disabled, PR not found, any network error.
+        """
+        if not self.config.github_mcp_enabled:
+            print(f"        ℹ️  GitHub MCP disabled — skipping PR #{pr_number}")
+            print(
+                "             Enable via: github.mcp.enabled: true in config.local.yaml"
+            )
+            return None
+
+        resolved_repo = repo or self.config._cfg.get("github", {}).get(
+            "default_repo", ""
+        )
+        if not resolved_repo:
+            print(
+                f"        ⚠️  GitHub repo not configured for PR #{pr_number}\n"
+                f"             Set github.default_repo in config.local.yaml"
+            )
+            return None
+
+        print(f"        🔍 Fetching GitHub PR #{pr_number} ({resolved_repo})...")
+
+        result = self._call_tool(
+            server_url=self.config.github_mcp_server_url,
+            tool_name="get_pull_request",
+            arguments={
+                "repo": resolved_repo,
+                "pullNumber": int(pr_number),
+            },
+        )
+
+        if not result.success or not result.data:
+            print(f"        ⚠️  Could not fetch PR #{pr_number}: {result.error}")
+            return None
+
+        pr = self._parse_github_pr(pr_number, resolved_repo, result.data)
+        print(f"        ✅ PR #{pr_number}: {pr.title[:60]} [{pr.status}]")
+        return pr
+
+    def get_my_pr_reviews(
+        self,
+        pr_number: str,
+        repo: str = "",
+    ) -> list[str]:
+        """
+        Fetch review comments authored by the configured github.username.
+
+        Filters server-side where possible, client-side otherwise.
+        Returns list of comment body strings — file context stripped,
+        just the comment text for LLM consumption.
+
+        Returns empty list if: GitHub MCP disabled, no comments found,
+        username not configured, any network error.
+        """
+        if not self.config.github_mcp_enabled:
+            return []
+
+        username = self.config.github_username
+        if not username:
+            print(
+                "        ⚠️  github.username not set — cannot filter my comments.\n"
+                "             Set in config.local.yaml: github.username: your-handle"
+            )
+            return []
+
+        resolved_repo = repo or self.config._cfg.get("github", {}).get(
+            "default_repo", ""
+        )
+        if not resolved_repo:
+            return []
+
+        result = self._call_tool(
+            server_url=self.config.github_mcp_server_url,
+            tool_name="get_pull_request_comments",
+            arguments={
+                "repo": resolved_repo,
+                "pullNumber": int(pr_number),
+            },
+        )
+
+        if not result.success or not result.data:
+            return []
+
+        return self._parse_my_pr_comments(result.data, username)
+
+    def is_github_available(self) -> bool:
+        """
+        Quick connectivity check for GitHub MCP.
+        Returns False if disabled, unreachable, or auth fails.
+        """
+        if not self.config.github_mcp_enabled:
+            return False
+        result = self._call_tool(
+            server_url=self.config.github_mcp_server_url,
+            tool_name="list_repositories",
+            arguments={"per_page": 1},
         )
         return result.success
 
@@ -684,6 +881,114 @@ class MCPClient:
             author=author_obj.get("displayName", ""),
         )
 
+    # ── GitHub Response Parsers ────────────────────────────────────────────────
+    def _parse_github_pr(
+        self,
+        pr_number: str,
+        repo: str,
+        data: dict,
+    ) -> "GitHubPR":
+        """
+        Parse raw GitHub MCP response into a GitHubPR.
+
+        GitHub MCP returns a flat dict — no nested "fields" wrapper
+        like Jira. Field names match GitHub REST API conventions.
+        """
+        username = self.config.github_username
+
+        # Determine my verdict from review state
+        # GitHub returns reviews as a list — find the latest by me
+        reviews = data.get("reviews", [])
+        my_verdict = "pending"
+        for review in reversed(reviews):
+            reviewer = (review.get("user") or {}).get("login", "")
+            if reviewer.lower() == username.lower():
+                state = review.get("state", "").lower()
+                # Map GitHub states to human-readable
+                my_verdict = {
+                    "approved": "approved",
+                    "changes_requested": "changes requested",
+                    "commented": "commented",
+                    "dismissed": "dismissed",
+                }.get(state, state)
+                break
+
+        # Count open threads from review comments
+        review_comments = data.get("review_comments", [])
+        open_threads = sum(
+            1
+            for c in review_comments
+            if c.get("in_reply_to_id") is None  # top-level comments only
+            and not c.get("resolved", False)
+        )
+
+        # My comments — filter by username
+        my_comments = self._parse_my_pr_comments(
+            {"comments": review_comments + data.get("comments", [])},
+            username,
+        )
+
+        # Build URL from number and repo if not provided
+        url = data.get("html_url", f"https://github.com/{repo}/pull/{pr_number}")
+
+        return GitHubPR(
+            pr_number=pr_number,
+            title=data.get("title", ""),
+            url=url,
+            repo=repo,
+            status=data.get("state", ""),
+            author=(data.get("user") or {}).get("login", ""),
+            base_branch=(data.get("base") or {}).get("ref", ""),
+            head_branch=(data.get("head") or {}).get("ref", ""),
+            files_changed=data.get("changed_files", 0),
+            my_comments=my_comments,
+            my_verdict=my_verdict,
+            open_threads=open_threads,
+            description=data.get("body", "")[:500],
+        )
+
+    def _parse_my_pr_comments(
+        self,
+        data: dict,
+        username: str,
+    ) -> list[str]:
+        """
+        Extract comment bodies authored by username from a GitHub comments response.
+
+        Handles both review comments (inline, with file/line context) and
+        general PR comments (top-level conversation).
+
+        Returns plain text bodies — file context stripped for LLM consumption.
+        Full thread context comes from the external PR comment script files.
+        """
+        if not username:
+            return []
+
+        my_comments: list[str] = []
+        all_comments = data.get("comments", [])
+
+        for comment in all_comments:
+            author = (comment.get("user") or {}).get("login", "")
+            if author.lower() != username.lower():
+                continue
+
+            body = comment.get("body", "").strip()
+            if not body:
+                continue
+
+            # Add file context prefix for review comments
+            path = comment.get("path", "")
+            line = comment.get("line") or comment.get("original_line", "")
+            if path:
+                prefix = f"`{path}`"
+                if line:
+                    prefix += f":{line}"
+                body = f"{prefix} — {body}"
+
+            my_comments.append(body[:300])
+
+        return my_comments
+
     # ── URL / ID Helpers ───────────────────────────────────────────────────────
 
     def _extract_confluence_page_id(self, url_or_id: str) -> str | None:
@@ -802,3 +1107,29 @@ def _extract_adf_text(node: dict, depth: int = 0) -> str:
     )
 
     return separator.join(result_parts) + separator
+
+
+def _extract_github_pr_number(url: str) -> str | None:
+    """
+    Extract PR number from a GitHub pull request URL.
+
+    Handles:
+      https://github.com/org/repo/pull/103018
+      https://github.com/org/repo/pull/103018/files
+      https://github.com/org/repo/pull/103018#discussion_r123
+
+    Returns PR number string, or None if URL doesn't match.
+    """
+    match = re.search(r"github\.com/[^/]+/[^/]+/pull/(\d+)", url)
+    return match.group(1) if match else None
+
+
+def _extract_github_repo(url: str) -> str | None:
+    """
+    Extract "org/repo" from a GitHub URL.
+
+    Returns e.g. "acmeinc/platform" from
+    "https://github.com/acmeinc/platform/pull/103018"
+    """
+    match = re.search(r"github\.com/([^/]+/[^/]+)", url)
+    return match.group(1).rstrip("/") if match else None
