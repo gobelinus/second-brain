@@ -268,6 +268,13 @@ def dump(
             help="Preview what would be written without creating any files.",
         ),
     ] = False,
+    copy_pr_comments: Annotated[
+        bool,
+        typer.Option(
+            "--copy-pr-comments",
+            help="Copy PR comment files from configured src_dir into inputs/YYYY-MM-DD/.",
+        ),
+    ] = False,
 ) -> None:
     """
     **Dump** — parse raw daily notes into structured input files.
@@ -283,8 +290,9 @@ def dump(
     - 🤝 **Meeting** — writes meet-<slug>.md skeleton for you to fill
     - 📎 **Other** — catch-all misc-<slug>.md, nothing is lost
 
-    Existing files are skipped with a warning — safe to re-run.
-    Your filled meeting skeletons are never overwritten.
+    After parsing, detected PR numbers are printed with instructions to
+    run your external PR comment script for each. Then use --copy-pr-comments
+    to copy the output files into the inputs directory.
 
     Typical daily workflow:
 
@@ -292,20 +300,71 @@ def dump(
 
         2. brain dump --date 2026-04-02
 
-        3. Fill any meet-*.md skeletons with your notes
+        3. Fill any meet-*.md skeletons
 
-        4. brain compose --date 2026-04-02 --ingest
+        4. Run external PR comment script for each detected PR
+
+        5. brain dump --date 2026-04-02 --copy-pr-comments
+
+        6. scp inputs/2026-04-02/ to remote server
+
+        7. python enricher.py --date 2026-04-02  (on remote)
+
+        8. scp enriched/ back → brain compose --date 2026-04-02 --ingest
 
     Examples:
 
         brain dump --date 2026-04-02
 
         brain dump --date 2026-04-02 --dry-run
+
+        brain dump --date 2026-04-02 --copy-pr-comments
     """
     _print_header("Daily Dump Parser")
 
     cfg = _get_config()
 
+    # ── --copy-pr-comments mode ───────────────────────────────────────────────
+    # Separate flow — reads existing pr-reviews.md to find PR numbers,
+    # then copies comment files from src_dir. Does not re-parse sections.
+    if copy_pr_comments:
+        try:
+            from brain.dump import PRCommentFetcher, _extract_pr_numbers
+
+            # Read PR numbers from existing pr-reviews.md
+            pr_file = cfg.dump_inputs_path(date) / cfg.dump_pr_merge_file
+            if not pr_file.exists():
+                typer.echo(
+                    f"\n❌ pr-reviews.md not found in inputs/{date}/\n"
+                    f"   Run brain dump --date {date} first.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            pr_numbers = _extract_pr_numbers(pr_file.read_text(encoding="utf-8"))
+            if not pr_numbers:
+                typer.echo(
+                    "\n⚠️  No PR numbers found in pr-reviews.md\n"
+                    "   Add GitHub PR URLs or #NNNN references to your dump.",
+                    err=True,
+                )
+                raise typer.Exit(code=0)
+
+            fetcher = PRCommentFetcher(cfg)
+            fetcher.copy(pr_numbers=pr_numbers, date=date, dry_run=dry_run)
+
+        except FileNotFoundError as e:
+            typer.echo(f"\n❌ {e}", err=True)
+            raise typer.Exit(code=1) from e
+
+        except Exception as e:
+            typer.echo(f"\n❌ Unexpected error copying PR comments: {e}", err=True)
+            raise typer.Exit(code=1) from e
+
+        typer.echo("\n✅ Done.\n")
+        return
+
+    # ── Standard dump parse mode ──────────────────────────────────────────────
     try:
         parser = DumpParser(cfg)
         result = parser.parse(date=date, dry_run=dry_run)
@@ -322,12 +381,11 @@ def dump(
         typer.echo(f"\n❌ Unexpected error during dump: {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    # ── Exit non-zero if nothing was written (all skipped) ────────────────────
-    # This lets cron/CI detect a no-op run if needed.
+    # Exit code 2 if all output files already existed — no-op run
     if result.sections and not result.written and not dry_run:
         typer.echo(
             "\n⚠️  All output files already exist — nothing written.\n"
-            "   Delete the files you want regenerated and re-run.",
+            "   Delete files you want regenerated and re-run.",
             err=True,
         )
         raise typer.Exit(code=2)

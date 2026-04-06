@@ -79,6 +79,8 @@ class DumpResult:
     written       : paths of files successfully written
     skipped       : paths skipped because they already existed
     warnings      : non-fatal messages (skipped files, empty sections, etc.)
+    pr_numbers    : PR numbers detected in pr-reviews.md (for comment fetching)
+    pr_copied     : PR comment files copied from src_dir (--copy-pr-comments run)
     """
 
     date: str
@@ -87,6 +89,8 @@ class DumpResult:
     written: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    pr_numbers: list[str] = field(default_factory=list)
+    pr_copied: list[Path] = field(default_factory=list)
 
     @property
     def task_count(self) -> int:
@@ -230,7 +234,7 @@ class DumpParser:
             print(f"        {symbol} [{s.section_type:8s}] {s.title}{jira_note}")
 
         # ── Step 4: Write output files ────────────────────────────────────────
-        print(f"  [4/4] Writing output files{' (DRY RUN)' if dry_run else ''}...")
+        print(f"  [4/5] Writing output files{' (DRY RUN)' if dry_run else ''}...")
         self._write_all(
             sections=all_sections,
             inputs_path=inputs_path,
@@ -238,6 +242,20 @@ class DumpParser:
             dry_run=dry_run,
             result=result,
         )
+
+        # ── Step 5: Detect PR numbers in written pr-reviews.md ────────────────
+        print("  [5/5] Scanning for PR numbers...")
+        pr_file = inputs_path / self.config.dump_pr_merge_file
+        if pr_file.exists():
+            result.pr_numbers = _extract_pr_numbers(pr_file.read_text(encoding="utf-8"))
+            if result.pr_numbers:
+                print(
+                    f"        Found {len(result.pr_numbers)} PR(s): {', '.join('#' + n for n in result.pr_numbers)}"
+                )
+            else:
+                print("        No PR numbers detected")
+        else:
+            print("        No pr-reviews.md found — skipping")
 
         # ── Summary ───────────────────────────────────────────────────────────
         print()
@@ -614,7 +632,6 @@ class DumpParser:
             raise ValueError(f"Invalid date format: '{date}'. Expected YYYY-MM-DD.")
 
     # ── Summary ────────────────────────────────────────────────────────────────
-
     def _print_summary(self, result: DumpResult, dry_run: bool) -> None:
         """Print a clean run summary with next-step instructions."""
         label = " (DRY RUN)" if dry_run else ""
@@ -638,7 +655,11 @@ class DumpParser:
             for p in result.skipped:
                 print(f"       → {p.name}")
 
-        # ── Next steps ────────────────────────────────────────────────────────
+        if result.pr_copied:
+            print(f"\n     📋 PR comment files copied ({len(result.pr_copied)}):")
+            for p in result.pr_copied:
+                print(f"       → {p.name}")
+
         if not dry_run:
             date = result.date
             meeting_files = [
@@ -650,16 +671,40 @@ class DumpParser:
             ]
 
             print()
-            print("  ─── Next Steps ───────────────────────────────────────")
+            print("  ─── Next Steps ───────────────────────────────────────────")
+
+            step = 1
 
             if meeting_files:
-                print(f"  1️⃣  Fill meeting skeletons ({len(meeting_files)} file(s)):")
+                print(
+                    f"  {step} Fill meeting skeletons ({len(meeting_files)} file(s)):"
+                )
                 for mf in meeting_files:
                     print(f"       open {mf}")
+                step += 1
 
-            step = 2 if meeting_files else 1
-            print(f"  {step}️⃣  Run: brain compose --date {date} --ingest")
-            print("  ──────────────────────────────────────────────────────")
+            # ── PR comment instructions ───────────────────────────────────────
+            if result.pr_numbers:
+                print(
+                    f"  {step} Get PR comments ({len(result.pr_numbers)} PR(s) detected):"
+                )
+                cmd_template = self.config.enricher_pr_external_command
+                for pr_num in result.pr_numbers:
+                    cmd = cmd_template.format(pr_number=pr_num)
+                    print(f"       {cmd}")
+                step += 1
+                print(f"  {step}  Copy PR comments to inputs:")
+                print(f"       brain dump --date {date} --copy-pr-comments")
+                step += 1
+
+            print(f"  {step} scp inputs/{date}/ to remote server")
+            step += 1
+            print(f"  {step}  python enricher.py --date {date}  (on remote)")
+            step += 1
+            print(
+                f"  {step}  scp enriched/ back → brain compose --date {date} --ingest"
+            )
+            print("  ─────────────────────────────────────────────────────────")
 
 
 # ── Private Module Helpers ────────────────────────────────────────────────────
@@ -679,6 +724,120 @@ def _strip_type_prefix(title: str) -> str:
     return re.sub(r"^[\w\s]{1,20}:\s*", "", title).strip() or title
 
 
+# ── PR Comment Fetcher ────────────────────────────────────────────────────────
+
+
+class PRCommentFetcher:
+    """
+    Copies PR comment files from the external script output directory
+    into the inputs/YYYY-MM-DD/ folder for a given date.
+
+    The external PR comment script is a black box — it writes files to a
+    configured src_dir. This class picks up those files and copies them
+    to the right place for enricher.py to consume.
+
+    Flow:
+      External script writes: ~/.brain/pr-comments/pr-103018-comments.md
+      PRCommentFetcher copies: inputs/2026-04-02/pr-103018-comments.md
+
+    Idempotency:
+      Existing destination files are SKIPPED with a warning.
+      Source files are never deleted — copy, not move.
+
+    Usage:
+      fetcher = PRCommentFetcher(config)
+      result = fetcher.copy(pr_numbers=["103018", "4521"], date="2026-04-02")
+    """
+
+    def __init__(self, config: BrainConfig | None = None):
+        self.config = config or BrainConfig()
+
+    def copy(
+        self,
+        pr_numbers: list[str],
+        date: str,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """
+        Copy PR comment files for the given PR numbers into inputs/YYYY-MM-DD/.
+
+        Args:
+            pr_numbers : list of PR number strings e.g. ["103018", "4521"]
+            date       : ISO date string YYYY-MM-DD
+            dry_run    : if True, print what would be copied without copying
+
+        Returns:
+            List of destination paths successfully copied (or would-be on dry_run).
+
+        Raises:
+            FileNotFoundError: src_dir doesn't exist or isn't configured.
+        """
+        src_dir = self.config.enricher_pr_comments_src_dir
+        dest_dir = self.config.dump_inputs_path(date)
+        pattern = self.config.enricher_pr_comments_filename_pattern
+        copied: list[Path] = []
+
+        print("\n🧠 Brain Dump — PR Comment Copy")
+        print(f"   Date    : {date}")
+        print(f"   Source  : {src_dir}")
+        print(f"   Dest    : {dest_dir}")
+        print()
+
+        if not src_dir.exists():
+            raise FileNotFoundError(
+                f"PR comments source directory not found: {src_dir}\n"
+                f"Run your external PR comment script first, or update\n"
+                f"enricher.pr_comments.src_dir in config.local.yaml"
+            )
+
+        if not pr_numbers:
+            print("  ℹ️  No PR numbers provided — nothing to copy.")
+            return []
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        for pr_num in pr_numbers:
+            filename = pattern.format(pr_number=pr_num)
+            src_path = src_dir / filename
+            dest_path = dest_dir / filename
+
+            # ── Source file missing ───────────────────────────────────────────
+            if not src_path.exists():
+                print(
+                    f"  ⚠️  Not found in src_dir: {filename}\n"
+                    f"       Run: {self.config.enricher_pr_external_command.format(pr_number=pr_num)}"
+                )
+                continue
+
+            # ── Destination already exists — skip ─────────────────────────────
+            if dest_path.exists():
+                print(f"  ⚠️  Already exists, skipping: {filename}")
+                continue
+
+            # ── Copy ──────────────────────────────────────────────────────────
+            if dry_run:
+                print(f"  [DRY RUN] Would copy: {filename}")
+                print(f"            {src_path} → {dest_path}")
+            else:
+                import shutil
+
+                shutil.copy2(str(src_path), str(dest_path))
+                print(f"  ✅ Copied: {filename}")
+
+            copied.append(dest_path)
+
+        # ── Summary ───────────────────────────────────────────────────────────
+        print()
+        if copied:
+            print(f"  ✅ {len(copied)} file(s) copied to inputs/{date}/")
+            print("     Ready to scp to remote server for enrichment.")
+        else:
+            print("  ⚠️  No files copied — check warnings above.")
+            print(f"     Source dir: {src_dir}")
+
+        return copied
+
+
 def _type_symbol(section_type: str) -> str:
     """Return an emoji symbol for the section type — used in console output."""
     return {
@@ -687,3 +846,47 @@ def _type_symbol(section_type: str) -> str:
         "meeting": "🤝",
         "other": "📎",
     }.get(section_type, "•")
+
+
+def _extract_pr_numbers(content: str) -> list[str]:
+    """
+    Extract PR numbers from markdown content.
+
+    Detects two formats:
+      Full URL : https://github.com/org/repo/pull/103018
+      Hash ref : #103018  or  PR #103018  or  pull/103018
+
+    Returns sorted deduplicated list of PR number strings.
+    Strings not ints — PR numbers are identifiers, not quantities.
+
+    Examples:
+      "* https://github.com/org/repo/pull/103018"  → ["103018"]
+      "* #4521 approved"                            → ["4521"]
+      "reviewed PR #4521 and #4489 today"           → ["4489", "4521"]
+    """
+    found: set[str] = set()
+
+    # Full GitHub URL pattern
+    url_matches = re.findall(
+        r"https?://github\.com/[^/]+/[^/]+/pull/(\d+)",
+        content,
+    )
+    found.update(url_matches)
+
+    # Hash ref pattern — #103018 or PR #103018 or pull/103018
+    # Require word boundary before # to avoid matching mid-word
+    hash_matches = re.findall(
+        r"(?:^|[\s,(])#(\d{3,})",  # min 3 digits — avoids matching #1 etc
+        content,
+        flags=re.MULTILINE,
+    )
+    found.update(hash_matches)
+
+    # plain pull/N pattern (without full URL)
+    pull_matches = re.findall(
+        r"\bpull/(\d+)\b",
+        content,
+    )
+    found.update(pull_matches)
+
+    return sorted(found)
