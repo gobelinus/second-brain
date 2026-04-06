@@ -749,6 +749,167 @@ mcp:
       - Output only the markdown. No preamble, no commentary.
 
 # -----------------------------------------------------------------------------
+# GitHub — PR and code review integration
+#
+# github.username is set in config.local.yaml — never tracked.
+# github.mcp is reserved for Phase 6b direct MCP integration.
+# For now, PR comments come via the external script defined in enricher:
+# -----------------------------------------------------------------------------
+github:
+  # Set in config.local.yaml:
+  # username: "your-github-handle"
+  mcp:
+    enabled: false
+    server_url: "https://api.githubcopilot.com/mcp/"
+
+# -----------------------------------------------------------------------------
+# Enricher — standalone remote enrichment pipeline
+#
+# Runs on remote Ubuntu server via: python enricher.py --date YYYY-MM-DD
+#
+# File classification:
+#   task-*.md  + <!-- jira:TICKET --> → Jira MCP + LLM brief
+#   task-*.md  (no jira tag)          → LLM-only structuring
+#   pr-reviews.md + pr-*-comments.md  → LLM PR summary
+#   meet-*.md  (unfilled skeleton)    → SKIP + warn
+#   daily_*.md                        → SKIP (source files)
+#   misc-*.md                         → LLM-only structuring
+#
+# Output: inputs/YYYY-MM-DD/enriched/ (Option B directory convention)
+# -----------------------------------------------------------------------------
+enricher:
+  # Output directory inside inputs/YYYY-MM-DD/
+  output_dir: "enriched"
+
+  # Files to skip by prefix — source dump files are never enriched directly
+  skip_prefixes:
+    - "daily_"
+
+  # Placeholder text that signals an unfilled meeting skeleton
+  # If found in a meet-*.md file, the file is skipped with a warning
+  meeting_unfilled_marker: "add your notes here"
+
+  # External reference note — added to enriched output when non-Jira/GitHub
+  # URLs are detected (Confluence, Google Docs, internal dashboards etc.)
+  # Phase 6b will enrich these automatically. For now we surface them.
+  external_docs_note: |
+    > ⚠️  External documents mentioned — review manually or wait for Phase 6b:
+
+  # PR comment integration
+  pr_comments:
+    # Where your external PR comment script writes its output.
+    # Override in config.local.yaml with your actual path.
+    src_dir: "~/.brain/pr-comments"
+
+    # Filename pattern for PR comment files.
+    # {pr_number} is replaced at runtime.
+    filename_pattern: "pr-{pr_number}-comments.md"
+
+    # Command to print (informational only — brain dump never runs this).
+    # {pr_number} is replaced at runtime.
+    # Override in config.local.yaml with your actual script path.
+    external_command: "python scripts/get_pr_comments.py {pr_number}"
+
+  # LLM prompt for task enrichment (Jira context available)
+  # Placeholders: {date}, {title}, {original_notes}, {jira_context}
+  task_jira_prompt_template: |
+    You are enriching a daily task note with external Jira context.
+    Produce a structured enriched brief that will be ingested into a
+    personal knowledge system.
+
+    Output EXACTLY this structure:
+
+    ## Structured Summary
+    [2-3 sentences: what was done today on this task, key decisions made]
+
+    ## Action Items
+    [todo.txt format — (A)/(B)/(C) priority, concrete next steps only]
+
+    ## Technical Details
+    [Specific technical details, config values, commands, file names worth preserving]
+
+    ## Jira Context
+    {jira_context}
+
+    ## External References
+    [Any non-Jira URLs found in the notes — flag Confluence/Google Docs for manual review]
+
+    Rules:
+    - Be specific — use names, ticket IDs, dates from the context
+    - Action items must be concrete — things to DO, not observations
+    - If no action items exist, write "None"
+    - If external docs are mentioned, list them under External References
+    - Output only the markdown. No preamble, no commentary.
+
+    Task: {title}
+    Date: {date}
+    Original notes:
+    {original_notes}
+
+  # LLM prompt for task enrichment (no Jira context)
+  # Placeholders: {date}, {title}, {original_notes}
+  task_llm_prompt_template: |
+    You are structuring a daily task note for a personal knowledge system.
+    No external ticket context is available — work only from the notes.
+
+    Output EXACTLY this structure:
+
+    ## Structured Summary
+    [2-3 sentences: what was worked on, key decisions or outcomes]
+
+    ## Action Items
+    [todo.txt format — (A)/(B)/(C) priority, concrete next steps only]
+
+    ## Technical Details
+    [Specific technical details worth preserving — commands, config, file names]
+
+    ## External References
+    [Any URLs found in the notes — flag Confluence/Google Docs for manual review]
+
+    Rules:
+    - Be specific — use details from the notes as written
+    - If no action items exist, write "None"
+    - Output only the markdown. No preamble, no commentary.
+
+    Task: {title}
+    Date: {date}
+    Original notes:
+    {original_notes}
+
+  # LLM prompt for PR review enrichment
+  # Placeholders: {date}, {pr_summaries}, {review_notes}
+  pr_llm_prompt_template: |
+    You are summarising a day of PR review activity for a personal knowledge system.
+    You have the reviewer's notes and detailed PR comment threads.
+
+    Output EXACTLY this structure:
+
+    ## PR Review Summary — {date}
+    [1-2 sentence overview of review activity today]
+
+    ## Reviews Completed
+    [One subsection per PR reviewed:]
+
+    ### PR #{pr_number} — {title}
+    **Status:** Open/Merged/Closed
+    **My verdict:** Approved / Changes requested / Commented
+    **Key feedback given:** [2-3 bullet points of substantive comments]
+    **Open threads:** [Any unresolved conversations — OPEN status comments]
+    **Action items:** [Follow-ups needed from reviewer side]
+
+    Rules:
+    - Focus on YOUR comments and verdicts — not the author's code
+    - Flag any OPEN resolution status threads as needing follow-up
+    - Action items are things YOU need to do (re-review, respond, approve)
+    - Output only the markdown. No preamble, no commentary.
+
+    PR notes from daily dump:
+    {review_notes}
+
+    PR comment threads:
+    {pr_summaries}
+
+# -----------------------------------------------------------------------------
 # Dump — Daily raw note parser
 #
 # brain dump --date YYYY-MM-DD

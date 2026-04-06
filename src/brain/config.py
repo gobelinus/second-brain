@@ -566,3 +566,159 @@ class BrainConfig:
     def dump_inputs_path(self, date: str) -> Path:
         """Path to the inputs folder for a given date. e.g. inputs/2026-04-02/"""
         return self.inputs / date
+
+    # ── MCP — External integrations ───────────────────────────────────────────────
+    @property
+    def mcp_jira_enabled(self) -> bool:
+        """Whether Jira MCP integration is enabled."""
+        return self._cfg.get("mcp", {}).get("jira", {}).get("enabled", False)
+
+    @property
+    def mcp_jira_server_url(self) -> str:
+        """Atlassian MCP server URL for Jira."""
+        return (
+            self._cfg.get("mcp", {})
+            .get("jira", {})
+            .get("server_url", "https://mcp.atlassian.com/mcp")
+        )
+
+    @property
+    def mcp_jira_ticket_pattern(self) -> str:
+        """Regex pattern for detecting Jira ticket IDs."""
+        return (
+            self._cfg.get("mcp", {})
+            .get("jira", {})
+            .get("ticket_id_pattern", r"[A-Z]{2,9}-\d+")
+        )
+
+    @property
+    def mcp_confluence_enabled(self) -> bool:
+        """Whether Confluence MCP integration is enabled."""
+        return self._cfg.get("mcp", {}).get("confluence", {}).get("enabled", False)
+
+    @property
+    def mcp_confluence_server_url(self) -> str:
+        """Atlassian MCP server URL for Confluence."""
+        return (
+            self._cfg.get("mcp", {})
+            .get("confluence", {})
+            .get("server_url", "https://mcp.atlassian.com/mcp")
+        )
+
+    @property
+    def mcp_task_brain_context_top_k(self) -> int:
+        """Max ChromaDB chunks for task enrichment brain context."""
+        return self._cfg.get("mcp", {}).get("task", {}).get("brain_context_top_k", 5)
+
+    @property
+    def mcp_task_brain_context_max_rows(self) -> int:
+        """Max SQLite rows for task enrichment brain context."""
+        return (
+            self._cfg.get("mcp", {}).get("task", {}).get("brain_context_max_rows", 10)
+        )
+
+    @property
+    def mcp_task_ingest_filename_template(self) -> str:
+        """Filename template for --ingest output. Placeholder: {ticket_id}"""
+        return (
+            self._cfg.get("mcp", {})
+            .get("task", {})
+            .get("ingest_filename_template", "task-{ticket_id}.md")
+        )
+
+    @property
+    def mcp_task_brief_prompt_template(self) -> str:
+        """LLM prompt for assembling the task brief."""
+        return self._cfg.get("mcp", {}).get("task", {}).get("brief_prompt_template", "")
+
+    # ── GitHub ────────────────────────────────────────────────────────────────────
+
+    @property
+    def github_username(self) -> str:
+        """GitHub username for filtering PR comments. Set in config.local.yaml."""
+        return self._cfg.get("github", {}).get("username", "")
+
+    @property
+    def github_mcp_enabled(self) -> bool:
+        """Whether GitHub MCP integration is enabled (Phase 6b)."""
+        return self._cfg.get("github", {}).get("mcp", {}).get("enabled", False)
+
+    @property
+    def github_mcp_server_url(self) -> str:
+        """GitHub MCP server URL."""
+        return (
+            self._cfg.get("github", {})
+            .get("mcp", {})
+            .get("server_url", "https://api.githubcopilot.com/mcp/")
+        )
+
+    # ── Enricher ──────────────────────────────────────────────────────────────────
+
+    @property
+    def enricher_output_dir(self) -> str:
+        """Subdirectory name for enriched output. e.g. 'enriched'"""
+        return self._cfg.get("enricher", {}).get("output_dir", "enriched")
+
+    @property
+    def enricher_skip_prefixes(self) -> list[str]:
+        """File prefixes to skip during enrichment."""
+        return self._cfg.get("enricher", {}).get("skip_prefixes", ["daily_"])
+
+    @property
+    def enricher_meeting_unfilled_marker(self) -> str:
+        """Text that signals an unfilled meeting skeleton."""
+        return self._cfg.get("enricher", {}).get(
+            "meeting_unfilled_marker", "add your notes here"
+        )
+
+    @property
+    def enricher_external_docs_note(self) -> str:
+        """Note template for flagging external docs in enriched output."""
+        return self._cfg.get("enricher", {}).get("external_docs_note", "")
+
+    @property
+    def enricher_pr_comments_src_dir(self) -> Path:
+        """Source directory where external PR comment script writes output."""
+        raw = (
+            self._cfg.get("enricher", {})
+            .get("pr_comments", {})
+            .get("src_dir", "~/.brain/pr-comments")
+        )
+        return Path(raw).expanduser()
+
+    @property
+    def enricher_pr_comments_filename_pattern(self) -> str:
+        """Filename pattern for PR comment files. Placeholder: {pr_number}"""
+        return (
+            self._cfg.get("enricher", {})
+            .get("pr_comments", {})
+            .get("filename_pattern", "pr-{pr_number}-comments.md")
+        )
+
+    @property
+    def enricher_pr_external_command(self) -> str:
+        """Command string to print for PR comment fetching. Placeholder: {pr_number}"""
+        return (
+            self._cfg.get("enricher", {})
+            .get("pr_comments", {})
+            .get("external_command", "python scripts/get_pr_comments.py {pr_number}")
+        )
+
+    @property
+    def enricher_task_jira_prompt_template(self) -> str:
+        """LLM prompt for task enrichment with Jira context."""
+        return self._cfg.get("enricher", {}).get("task_jira_prompt_template", "")
+
+    @property
+    def enricher_task_llm_prompt_template(self) -> str:
+        """LLM prompt for task enrichment without Jira context."""
+        return self._cfg.get("enricher", {}).get("task_llm_prompt_template", "")
+
+    @property
+    def enricher_pr_llm_prompt_template(self) -> str:
+        """LLM prompt for PR review enrichment."""
+        return self._cfg.get("enricher", {}).get("pr_llm_prompt_template", "")
+
+    def enricher_output_path(self, date: str) -> Path:
+        """Full path to enriched output directory for a given date."""
+        return self.inputs / date / self.enricher_output_dir
