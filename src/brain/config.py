@@ -722,3 +722,78 @@ class BrainConfig:
     def enricher_output_path(self, date: str) -> Path:
         """Full path to enriched output directory for a given date."""
         return self.inputs / date / self.enricher_output_dir
+
+    # ── Calendar ──────────────────────────────────────────────────────────────────
+
+    @property
+    def calendar_mcp_enabled(self) -> bool:
+        """Whether Google Calendar MCP integration is enabled."""
+        return self._cfg.get("calendar", {}).get("mcp", {}).get("enabled", False)
+
+    @property
+    def calendar_mcp_server_url(self) -> str:
+        """Google Calendar MCP server URL."""
+        return (
+            self._cfg.get("calendar", {})
+            .get("mcp", {})
+            .get("server_url", "https://gcal.mcp.claude.com/mcp")
+        )
+
+    @property
+    def calendar_skip_all_day(self) -> bool:
+        """Skip all-day events (holidays, OOO markers)."""
+        return (
+            self._cfg.get("calendar", {})
+            .get("filters", {})
+            .get("skip_all_day_events", True)
+        )
+
+    @property
+    def calendar_min_duration_minutes(self) -> int:
+        """Minimum event duration to include. 0 = include all."""
+        return (
+            self._cfg.get("calendar", {})
+            .get("filters", {})
+            .get("min_duration_minutes", 0)
+        )
+
+    @property
+    def calendar_accepted_only(self) -> bool:
+        """Only include events where user has accepted the invite."""
+        return (
+            self._cfg.get("calendar", {}).get("filters", {}).get("accepted_only", False)
+        )
+
+    @property
+    def calendar_output_filename(self) -> str:
+        """Output filename for meeting scaffold. Must match daily_*.md glob."""
+        return self._cfg.get("calendar", {}).get("output_filename", "daily_meetings.md")
+
+    @property
+    def calendar_schedule_hour(self) -> int:
+        """Hour to trigger the calendar pull (24h format)."""
+        return self._cfg.get("calendar", {}).get("schedule", {}).get("hour", 9)
+
+    @property
+    def calendar_schedule_minute(self) -> int:
+        """Minute to trigger the calendar pull."""
+        return self._cfg.get("calendar", {}).get("schedule", {}).get("minute", 0)
+
+    @property
+    def calendar_launchd_label(self) -> str:
+        """Launchd plist label for the calendar job."""
+        return (
+            self._cfg.get("calendar", {})
+            .get("schedule", {})
+            .get("launchd_label", "com.brain.calendar")
+        )
+
+    @property
+    def calendar_meeting_template(self) -> str:
+        """Per-event markdown template. Placeholders: title, start, end,
+        calendar_name, attendees, location_line."""
+        return self._cfg.get("calendar", {}).get("meeting_template", "")
+
+    def calendar_output_path(self, date: str) -> Path:
+        """Full path to daily_meetings.md for a given date."""
+        return self.inputs / date / self.calendar_output_filename

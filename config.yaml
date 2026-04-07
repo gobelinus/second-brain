@@ -359,6 +359,7 @@ reminder:
     ```
     mkdir -p inputs/{date}
     ```
+    - [ ] Check `inputs/{date}/daily_meetings.md` — calendar events pre-populated
     - [ ] Drop `daily_dump.md` (or `daily_*.md`) into `inputs/{date}/`
     - [ ] Paste Claude session summary → `inputs/{date}/claude.md`
     - [ ] Paste Gemini session summary → `inputs/{date}/gemini.md`
@@ -761,6 +762,57 @@ github:
   mcp:
     enabled: false
     server_url: "https://api.githubcopilot.com/mcp/"
+
+# -----------------------------------------------------------------------------
+# Calendar — Google Calendar integration
+#
+# brain calendar                    → pull today + yesterday (standard daily run)
+# brain calendar --date YYYY-MM-DD  → pull specific date
+# brain calendar --install          → generate + load launchd plist
+# brain calendar --uninstall        → unload + remove plist
+# brain calendar --status           → show schedule + last run
+#
+# Output: inputs/YYYY-MM-DD/daily_meetings.md
+# Matches daily_*.md glob — picked up by brain dump automatically.
+#
+# Runs twice per launchd trigger (today + yesterday):
+#   Today    → scaffold meetings before the day starts
+#   Yesterday → backfill meetings added after the morning pull
+#
+# Idempotency: existing daily_meetings.md is SKIPPED (protects filled notes).
+# -----------------------------------------------------------------------------
+calendar:
+  # Google Calendar MCP
+  mcp:
+    enabled: true
+    server_url: "https://gcal.mcp.claude.com/mcp"
+
+  # Event filtering
+  filters:
+    skip_all_day_events: true   # skip holidays, OOO markers, all-day reminders
+    min_duration_minutes: 0     # 0 = include all events regardless of length
+    accepted_only: false        # false = pull all events, delete what you don't need
+
+  # Output filename — must match daily_*.md glob for brain dump pickup
+  output_filename: "daily_meetings.md"
+
+  # Launchd schedule — runs at same time as brain remind
+  schedule:
+    hour: 9
+    minute: 0
+    launchd_label: "com.brain.calendar"
+
+  # Meeting section template written per calendar event.
+  # Placeholders: {title}, {start}, {end}, {calendar_name}, {attendees}, {location_line}
+  # {location_line} is empty string if no location — no blank line left behind.
+  meeting_template: |
+    ## Meet: {title} ({start} – {end})
+
+    **Calendar:** {calendar_name}
+    **Attendees:** {attendees}
+    {location_line}<!-- add your notes here -->
+
+    ---
 
 # -----------------------------------------------------------------------------
 # Enricher — standalone remote enrichment pipeline

@@ -6,6 +6,7 @@ Built with Typer. Exposes clean, memorable commands:
   brain compose   — combine input files into a structured summary
   brain dump      — parse raw daily_*.md notes into structured inputs
   brain remind    — manage the daily reminder system
+  brain calendar  - pull Google Calendar events and scaffold meeting notes
   brain query     — semantic query across your brain (Phase 3 ✅)
   brain trend     — structured trend queries via SQLite (Phase 2)
   brain summarize — summarize a date range (Phase 3 ✅)
@@ -20,6 +21,7 @@ from typing import Annotated
 
 import typer
 
+from brain.calendar_puller import CalendarPuller
 from brain.composer import Composer
 from brain.config import BrainConfig
 from brain.dump import DumpParser
@@ -448,6 +450,103 @@ def remind(
         else:
             # Default — send reminder now (test mode)
             reminder.send()
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except RuntimeError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def calendar(
+    date: Annotated[
+        str | None,
+        typer.Option(
+            "--date",
+            "-d",
+            help="Date to pull events for (YYYY-MM-DD). Default: today + yesterday.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing files."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite existing daily_meetings.md."),
+    ] = False,
+    install: Annotated[
+        bool,
+        typer.Option("--install", help="Generate + load launchd plist."),
+    ] = False,
+    uninstall: Annotated[
+        bool,
+        typer.Option("--uninstall", help="Unload + remove launchd plist."),
+    ] = False,
+    status: Annotated[
+        bool,
+        typer.Option("--status", help="Show schedule + last run info."),
+    ] = False,
+) -> None:
+    """
+    **Calendar** — pull Google Calendar events and scaffold meeting notes.
+
+    Without --date, pulls TODAY and YESTERDAY in one pass — this is the
+    standard daily run scheduled via launchd at 09:00.
+
+    Each event becomes a ## Meet: section in daily_meetings.md.
+    brain dump picks this up automatically via the daily_*.md glob.
+
+    Examples:
+
+        brain calendar
+
+        brain calendar --date 2026-04-02
+
+        brain calendar --date 2026-04-02 --dry-run
+
+        brain calendar --install
+
+        brain calendar --status
+    """
+    from datetime import date as date_type
+    from datetime import timedelta
+
+    _print_header("Google Calendar")
+    cfg = _get_config()
+
+    try:
+        puller = CalendarPuller(cfg)
+
+        if install:
+            puller.install()
+
+        elif uninstall:
+            puller.uninstall()
+
+        elif status:
+            puller.status()
+
+        elif date:
+            # Single specific date
+            puller.pull(date=date, dry_run=dry_run, force=force)
+
+        else:
+            # Default — today + yesterday
+            today = date_type.today().isoformat()
+            yesterday = (date_type.today() - timedelta(days=1)).isoformat()
+            typer.echo(f"   Pulling: {today} + {yesterday}")
+            puller.pull(date=today, dry_run=dry_run, force=force)
+            puller.pull(date=yesterday, dry_run=dry_run, force=force)
 
     except FileNotFoundError as e:
         typer.echo(f"\n❌ {e}", err=True)
