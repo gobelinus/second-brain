@@ -393,7 +393,13 @@ class Enricher:
         title = _extract_title(content, file_path.name)
         date = file_path.parent.name
 
-        prompt = self.config.enricher_task_jira_prompt_template.format(
+        template = self.config.enricher_task_jira_prompt_template
+        if not template:
+            raise ValueError(
+                "enricher.task_jira_prompt_template is empty in config.yaml.\n"
+                "Add the enricher: section to config.yaml — see Phase 5b Step 1."
+            )
+        prompt = template.format(
             title=title,
             date=date,
             original_notes=content,
@@ -453,7 +459,13 @@ class Enricher:
         date = file_path.parent.name
 
         print("       Calling LLM for structuring...")
-        prompt = self.config.enricher_task_llm_prompt_template.format(
+        template = self.config.enricher_task_llm_prompt_template
+        if not template:
+            raise ValueError(
+                "enricher.task_llm_prompt_template is empty in config.yaml.\n"
+                "Add the enricher: section to config.yaml — see Phase 5b Step 1."
+            )
+        prompt = template.format(
             title=title,
             date=date,
             original_notes=content,
@@ -572,7 +584,14 @@ class Enricher:
             pr_summaries = f"## GitHub PR Metadata\n\n{github_context}\n\n---\n\n## Comment Threads\n\n{pr_summaries}"
 
         print("       Calling LLM for PR summary...")
-        prompt = self.config.enricher_pr_llm_prompt_template.format(
+        template = self.config.enricher_pr_llm_prompt_template
+        if not template:
+            raise ValueError(
+                "enricher.pr_llm_prompt_template is empty in config.yaml.\n"
+                "Add the enricher: section to config.yaml — see Phase 5b Step 1."
+            )
+
+        prompt = template.format(
             date=date,
             review_notes=content,
             pr_summaries=pr_summaries,

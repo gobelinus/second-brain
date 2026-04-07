@@ -890,7 +890,7 @@ enricher:
     ## Reviews Completed
     [One subsection per PR reviewed:]
 
-    ### PR #{pr_number} — {title}
+    ### PR #{{pr_number}} — {{title}}
     **Status:** Open/Merged/Closed
     **My verdict:** Approved / Changes requested / Commented
     **Key feedback given:** [2-3 bullet points of substantive comments]
