@@ -719,6 +719,43 @@ class BrainConfig:
         """LLM prompt for PR review enrichment."""
         return self._cfg.get("enricher", {}).get("pr_llm_prompt_template", "")
 
+    @property
+    def enricher_jira_src_dir(self) -> Path:
+        """Where external Jira script writes JSON output."""
+        raw = (
+            self._cfg.get("enricher", {})
+            .get("jira_script", {})
+            .get("src_dir", "~/.brain/jira-context")
+        )
+        return Path(raw).expanduser()
+
+    @property
+    def enricher_jira_filename_pattern(self) -> str:
+        """Filename pattern for Jira JSON files. Placeholder: {ticket_id}"""
+        return (
+            self._cfg.get("enricher", {})
+            .get("jira_script", {})
+            .get("filename_pattern", "jira-{ticket_id}.json")
+        )
+
+    @property
+    def enricher_jira_external_command(self) -> str:
+        """Command to print for Jira context fetching. Placeholder: {ticket_id}"""
+        return (
+            self._cfg.get("enricher", {})
+            .get("jira_script", {})
+            .get("external_command", "python scripts/get_jira_ticket.py {ticket_id}")
+        )
+
+    @property
+    def enricher_context_dir(self) -> str:
+        """Subdirectory name for pre-fetched context files. e.g. 'context'"""
+        return self._cfg.get("enricher", {}).get("context_dir", "context")
+
+    def enricher_context_path(self, date: str) -> Path:
+        """Full path to context/ directory for a given date."""
+        return self.inputs / date / self.enricher_context_dir
+
     def enricher_output_path(self, date: str) -> Path:
         """Full path to enriched output directory for a given date."""
         return self.inputs / date / self.enricher_output_dir

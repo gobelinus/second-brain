@@ -862,6 +862,26 @@ enricher:
     # Override in config.local.yaml with your actual script path.
     external_command: "python scripts/get_pr_comments.py {pr_number}"
 
+  # Jira ticket context — from external script (no MCP credentials needed)
+  # Script writes one JSON file per ticket: jira-ENG-161845.json
+  # Same pattern as pr_comments above — external black box, we copy output.
+  jira_script:
+    # Where your external Jira script writes its output.
+    # Override in config.local.yaml with your actual path.
+    src_dir: "~/.brain/jira-context"
+
+    # Filename pattern — {ticket_id} replaced at runtime
+    filename_pattern: "jira-{ticket_id}.json"
+
+    # Command to print (informational only — brain dump never runs this).
+    # {ticket_id} replaced at runtime.
+    # Override in config.local.yaml with your actual script path.
+    external_command: "python scripts/get_jira_ticket.py {ticket_id}"
+
+  # Context output directory inside inputs/YYYY-MM-DD/
+  # Jira JSON + PR comment files are copied here before enrichment.
+  context_dir: "context"
+
   # LLM prompt for task enrichment (Jira context available)
   # Placeholders: {date}, {title}, {original_notes}, {jira_context}
   task_jira_prompt_template: |
