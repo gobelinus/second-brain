@@ -69,7 +69,6 @@ sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 from brain.config import BrainConfig  # noqa: E402
 from brain.mcp_client import (  # noqa: E402
     GitHubPR,
-    JiraTicket,
     MCPClient,
 )
 
@@ -340,7 +339,6 @@ class Enricher:
             )
 
     # ── Enrichment Paths ───────────────────────────────────────────────────────
-
     def _enrich_task_jira(
         self,
         file_path: Path,
@@ -353,26 +351,47 @@ class Enricher:
         """
         Enrich a task file that has Jira ticket tags.
 
+        Reads pre-fetched Jira JSON from inputs/YYYY-MM-DD/context/
+        No MCP calls. No credentials. Pure local file reading.
+
         Flow:
-          1. Fetch each Jira ticket via MCP
-          2. Detect external URLs in content (Confluence, Google Docs etc.)
-          3. Call LLM with notes + Jira context → structured brief
-          4. Write enriched file
+          1. For each jira_id, look for context/jira-TICKET.json
+          2. Parse with JiraParser → JiraTicket
+          3. Detect external URLs in content
+          4. Call LLM with notes + Jira context → structured brief
+          5. Write enriched file
         """
+        from brain.jira_parser import JiraParser
+
         print(f"  📋 Task + Jira: {', '.join(jira_ids)}")
 
-        # ── Step 1: Fetch Jira tickets ────────────────────────────────────────
-        jira_tickets: list[JiraTicket] = []
+        context_dir = file_path.parent / self.config.enricher_context_dir
+        parser = JiraParser()
+        jira_tickets = []
+
+        # ── Step 1: Read pre-fetched Jira JSON files ──────────────────────────
         for ticket_id in jira_ids:
-            ticket = self.mcp.get_jira_ticket(ticket_id)
+            pattern = self.config.enricher_jira_filename_pattern
+            json_path = context_dir / pattern.format(ticket_id=ticket_id)
+
+            if not json_path.exists():
+                print(
+                    f"       ⚠️  Jira context not found: {json_path.name}\n"
+                    f"             Run: {self.config.enricher_jira_external_command.format(ticket_id=ticket_id)}\n"
+                    f"             Then: brain dump --date {file_path.parent.name} --copy-jira-context"
+                )
+                continue
+
+            ticket = parser.parse_file(json_path)
             if ticket:
+                print(f"       ✅ Loaded: {json_path.name} [{ticket.status}]")
                 jira_tickets.append(ticket)
             else:
-                print(f"       ⚠️  Jira unavailable for {ticket_id} — using LLM-only")
+                print(f"       ⚠️  Could not parse: {json_path.name}")
 
-        # If all Jira fetches failed, fall back to LLM-only
+        # ── Fallback: LLM-only if no context files found ──────────────────────
         if not jira_tickets:
-            print("       Falling back to LLM-only enrichment")
+            print("       No Jira context files found — falling back to LLM-only")
             return self._enrich_task_llm(
                 file_path=file_path,
                 content=content,
@@ -385,10 +404,10 @@ class Enricher:
         # ── Step 2: Detect external URLs ──────────────────────────────────────
         external_urls = _extract_external_urls(content, jira_ids)
 
-        # ── Step 3: Assemble Jira context block ───────────────────────────────
+        # ── Step 3: Build Jira context block ─────────────────────────────────
         jira_context = "\n\n".join(t.to_context_block() for t in jira_tickets)
 
-        # ── Step 4: Call LLM ──────────────────────────────────────────────────
+        # ── Step 4: Call LLM ─────────────────────────────────────────────────
         print("       Calling LLM for brief assembly...")
         title = _extract_title(content, file_path.name)
         date = file_path.parent.name
@@ -397,8 +416,9 @@ class Enricher:
         if not template:
             raise ValueError(
                 "enricher.task_jira_prompt_template is empty in config.yaml.\n"
-                "Add the enricher: section to config.yaml — see Phase 5b Step 1."
+                "Add the enricher: section to config.yaml."
             )
+
         prompt = template.format(
             title=title,
             date=date,
@@ -407,12 +427,12 @@ class Enricher:
         )
         brief = self._call_llm(prompt, verbose=verbose)
 
-        # ── Step 5: Build enriched output ─────────────────────────────────────
+        # ── Step 5: Write enriched output ────────────────────────────────────
         enriched = _build_task_output(
             title=title,
             date=date,
             source_file=file_path.name,
-            enrichment_type="Jira MCP + LLM",
+            enrichment_type="Jira (external script) + LLM",
             jira_ids=jira_ids,
             original_notes=content,
             brief=brief,
