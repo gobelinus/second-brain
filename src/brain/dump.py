@@ -91,6 +91,7 @@ class DumpResult:
     warnings: list[str] = field(default_factory=list)
     pr_numbers: list[str] = field(default_factory=list)
     pr_copied: list[Path] = field(default_factory=list)
+    jira_ids_detected: list[str] = field(default_factory=list)  # ← NEW after pr_numbers
 
     @property
     def task_count(self) -> int:
@@ -205,14 +206,14 @@ class DumpParser:
         result = DumpResult(date=date)
 
         # ── Step 1: Collect daily_*.md input files ────────────────────────────
-        print("  [1/4] Collecting input files...")
+        print("  [1/6] Collecting input files...")
         input_files = self._collect_inputs(inputs_path)
         result.input_files = input_files
         for f in input_files:
             print(f"        + {f.name}")
 
         # ── Step 2: Parse all sections from all input files ───────────────────
-        print("  [2/4] Parsing H2 sections...")
+        print("  [2/6] Parsing H2 sections...")
         all_sections: list[ParsedSection] = []
         for f in input_files:
             sections = self._parse_file(f)
@@ -227,14 +228,14 @@ class DumpParser:
         result.sections = all_sections
 
         # ── Step 3: Classify sections ─────────────────────────────────────────
-        print("  [3/4] Classifying sections...")
+        print("  [3/6] Classifying sections...")
         for s in all_sections:
             symbol = _type_symbol(s.section_type)
             jira_note = f"  [jira: {', '.join(s.jira_ids)}]" if s.jira_ids else ""
             print(f"        {symbol} [{s.section_type:8s}] {s.title}{jira_note}")
 
         # ── Step 4: Write output files ────────────────────────────────────────
-        print(f"  [4/5] Writing output files{' (DRY RUN)' if dry_run else ''}...")
+        print(f"  [4/6] Writing output files{' (DRY RUN)' if dry_run else ''}...")
         self._write_all(
             sections=all_sections,
             inputs_path=inputs_path,
@@ -244,7 +245,7 @@ class DumpParser:
         )
 
         # ── Step 5: Detect PR numbers in written pr-reviews.md ────────────────
-        print("  [5/5] Scanning for PR numbers...")
+        print("  [5/6] Scanning for PR numbers...")
         pr_file = inputs_path / self.config.dump_pr_merge_file
         if pr_file.exists():
             result.pr_numbers = _extract_pr_numbers(pr_file.read_text(encoding="utf-8"))
@@ -256,6 +257,18 @@ class DumpParser:
                 print("        No PR numbers detected")
         else:
             print("        No pr-reviews.md found — skipping")
+
+        # ── Step 6: Collect all Jira IDs from written task files ─────────────
+        print("  [6/6] Collecting Jira ticket IDs from task files...")
+        all_jira_ids: set[str] = set()
+        for section in all_sections:
+            if section.jira_ids:
+                all_jira_ids.update(section.jira_ids)
+        result.jira_ids_detected = sorted(all_jira_ids)
+        if result.jira_ids_detected:
+            print(f"        Found: {', '.join(result.jira_ids_detected)}")
+        else:
+            print("        No Jira ticket IDs detected")
 
         # ── Summary ───────────────────────────────────────────────────────────
         print()
@@ -683,18 +696,33 @@ class DumpParser:
                     print(f"       open {mf}")
                 step += 1
 
-            # ── PR comment instructions ───────────────────────────────────────
+            # ── PR comment instructions ───────────────────────────────────────────
             if result.pr_numbers:
                 print(
-                    f"  {step} Get PR comments ({len(result.pr_numbers)} PR(s) detected):"
+                    f"{step}  Get PR comments ({len(result.pr_numbers)} PR(s) detected):"
                 )
                 cmd_template = self.config.enricher_pr_external_command
                 for pr_num in result.pr_numbers:
                     cmd = cmd_template.format(pr_number=pr_num)
                     print(f"       {cmd}")
+
                 step += 1
-                print(f"  {step}  Copy PR comments to inputs:")
+                print(f"  {step}   Copy PR comments to inputs:")
                 print(f"       brain dump --date {date} --copy-pr-comments")
+                step += 1
+
+            # ── Jira context instructions ─────────────────────────────────────────
+            if result.jira_ids_detected:
+                print(
+                    f"  {step}   Get Jira context ({len(result.jira_ids_detected)} ticket(s) detected):"
+                )
+                cmd_template = self.config.enricher_jira_external_command
+                for ticket_id in result.jira_ids_detected:
+                    cmd = cmd_template.format(ticket_id=ticket_id)
+                    print(f"       {cmd}")
+                step += 1
+                print(f"  {step}   Copy Jira context to inputs:")
+                print(f"       brain dump --date {date} --copy-jira-context")
                 step += 1
 
             print(f"  {step} scp inputs/{date}/ to remote server")
@@ -890,3 +918,106 @@ def _extract_pr_numbers(content: str) -> list[str]:
     found.update(pull_matches)
 
     return sorted(found)
+
+
+# ── Jira Context Fetcher ──────────────────────────────────────────────────────
+
+
+class JiraContextFetcher:
+    """
+    Copies Jira JSON context files from the external script output directory
+    into inputs/YYYY-MM-DD/context/ for a given date.
+
+    The external Jira script is a black box — it writes jira-TICKET.json
+    files to a configured src_dir. This class copies them to the right
+    place so enricher.py can read them without any credentials.
+
+    Flow:
+      External script writes: ~/.brain/jira-context/jira-ENG-161845.json
+      JiraContextFetcher copies: inputs/2026-04-02/context/jira-ENG-161845.json
+
+    Idempotent: existing files are SKIPPED with a warning.
+    Source files are never deleted — copy, not move.
+    """
+
+    def __init__(self, config: BrainConfig | None = None):
+        self.config = config or BrainConfig()
+
+    def copy(
+        self,
+        ticket_ids: list[str],
+        date: str,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """
+        Copy Jira JSON files for the given ticket IDs into
+        inputs/YYYY-MM-DD/context/.
+
+        Args:
+            ticket_ids : list of ticket ID strings e.g. ["ENG-161845", "CS-15011"]
+            date       : ISO date string YYYY-MM-DD
+            dry_run    : if True, print what would be copied without copying
+
+        Returns:
+            List of destination paths successfully copied.
+
+        Raises:
+            FileNotFoundError: src_dir doesn't exist or isn't configured.
+        """
+        import shutil
+
+        src_dir = self.config.enricher_jira_src_dir
+        dest_dir = self.config.enricher_context_path(date)
+        pattern = self.config.enricher_jira_filename_pattern
+        copied: list[Path] = []
+
+        print("\n🧠 Brain Dump — Jira Context Copy")
+        print(f"   Date   : {date}")
+        print(f"   Source : {src_dir}")
+        print(f"   Dest   : {dest_dir}")
+        print()
+
+        if not src_dir.exists():
+            raise FileNotFoundError(
+                f"Jira context source directory not found: {src_dir}\n"
+                f"Run your external Jira script first, or update\n"
+                f"enricher.jira_script.src_dir in config.local.yaml"
+            )
+
+        if not ticket_ids:
+            print("  ℹ️  No Jira ticket IDs provided — nothing to copy.")
+            return []
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        for ticket_id in ticket_ids:
+            filename = pattern.format(ticket_id=ticket_id)
+            src_path = src_dir / filename
+            dest_path = dest_dir / filename
+
+            if not src_path.exists():
+                cmd = self.config.enricher_jira_external_command.format(
+                    ticket_id=ticket_id
+                )
+                print(f"  ⚠️  Not found in src_dir: {filename}\n       Run: {cmd}")
+                continue
+
+            if dest_path.exists():
+                print(f"  ⚠️  Already exists, skipping: {filename}")
+                continue
+
+            if dry_run:
+                print(f"  [DRY RUN] Would copy: {filename}")
+            else:
+                shutil.copy2(str(src_path), str(dest_path))
+                print(f"  ✅ Copied: {filename}")
+
+            copied.append(dest_path)
+
+        print()
+        if copied and not dry_run:
+            print(f"  ✅ {len(copied)} Jira file(s) copied to {dest_dir}")
+        elif not copied:
+            print("  ⚠️  No files copied — check warnings above.")
+
+        return copied
