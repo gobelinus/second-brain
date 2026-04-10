@@ -277,6 +277,13 @@ def dump(
             help="Copy PR comment files from configured src_dir into inputs/YYYY-MM-DD/.",
         ),
     ] = False,
+    copy_jira_context: Annotated[
+        bool,
+        typer.Option(
+            "--copy-jira-context",
+            help="Copy Jira JSON context files from configured src_dir into inputs/YYYY-MM-DD/context/.",
+        ),
+    ] = False,
 ) -> None:
     """
     **Dump** — parse raw daily notes into structured input files.
@@ -295,7 +302,6 @@ def dump(
     After parsing, detected PR numbers are printed with instructions to
     run your external PR comment script for each. Then use --copy-pr-comments
     to copy the output files into the inputs directory.
-
     Typical daily workflow:
 
         1. Drop daily_dump.md into inputs/2026-04-02/
@@ -308,11 +314,15 @@ def dump(
 
         5. brain dump --date 2026-04-02 --copy-pr-comments
 
-        6. scp inputs/2026-04-02/ to remote server
+        6. Run external Jira script for each detected ticket
 
-        7. python enricher.py --date 2026-04-02  (on remote)
+        7. brain dump --date 2026-04-02 --copy-jira-context
 
-        8. scp enriched/ back → brain compose --date 2026-04-02 --ingest
+        8. scp inputs/2026-04-02/ to remote server
+
+        9. python enricher.py --date 2026-04-02  (on remote)
+
+       10. scp enriched/ back → brain compose --date 2026-04-02 --ingest
 
     Examples:
 
@@ -361,6 +371,56 @@ def dump(
 
         except Exception as e:
             typer.echo(f"\n❌ Unexpected error copying PR comments: {e}", err=True)
+            raise typer.Exit(code=1) from e
+
+        typer.echo("\n✅ Done.\n")
+        return
+
+    # ── --copy-jira-context mode ──────────────────────────────────────────────
+    if copy_jira_context:
+        try:
+            from brain.dump import JiraContextFetcher
+
+            # Read Jira IDs from task files in inputs/YYYY-MM-DD/
+            inputs_path = cfg.dump_inputs_path(date)
+            if not inputs_path.exists():
+                typer.echo(
+                    f"\n❌ inputs/{date}/ not found.\n"
+                    f"   Run brain dump --date {date} first.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            # Collect all jira: tags from task-*.md files
+            import re
+
+            # jira_pattern = cfg.mcp_jira_ticket_pattern
+            all_ticket_ids: set[str] = set()
+            for task_file in inputs_path.glob("task-*.md"):
+                content = task_file.read_text(encoding="utf-8")
+                tagged = re.findall(r"<!--\s*jira:([A-Z]{2,9}-\d+)\s*-->", content)
+                all_ticket_ids.update(tagged)
+
+            if not all_ticket_ids:
+                typer.echo(
+                    "\n⚠️  No Jira ticket IDs found in task-*.md files\n"
+                    "   Make sure task files contain <!-- jira:TICKET --> tags.",
+                    err=True,
+                )
+                raise typer.Exit(code=0)
+
+            ticket_ids = sorted(all_ticket_ids)
+            typer.echo(f"\n   Tickets found: {', '.join(ticket_ids)}")
+
+            fetcher = JiraContextFetcher(cfg)
+            fetcher.copy(ticket_ids=ticket_ids, date=date, dry_run=dry_run)
+
+        except FileNotFoundError as e:
+            typer.echo(f"\n❌ {e}", err=True)
+            raise typer.Exit(code=1) from e
+
+        except Exception as e:
+            typer.echo(f"\n❌ Unexpected error copying Jira context: {e}", err=True)
             raise typer.Exit(code=1) from e
 
         typer.echo("\n✅ Done.\n")
