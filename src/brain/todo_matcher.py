@@ -175,6 +175,48 @@ class TodoMatcher:
 
         return open_lines, done_lines
 
+    def list_overdue(self) -> list[tuple[str, str]]:
+        """
+        Return all open todos that have a due:YYYY-MM-DD tag older than today.
+
+        Returns list of (due_date, raw_line) tuples sorted by due date ascending
+        (most overdue first).
+
+        Only considers todos with an explicit due: tag — todos without due dates
+        are not included.
+        """
+        from datetime import date as date_type
+
+        today = date_type.today().isoformat()
+        todo_path = self.config.todo_txt
+
+        if not todo_path.exists():
+            return []
+
+        overdue: list[tuple[str, str]] = []
+
+        for line in todo_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+
+            # Skip blank, comments, completed
+            if not stripped or stripped.startswith("#") or stripped.startswith("x "):
+                continue
+
+            # Extract due: tag
+            due_match = re.search(r"\bdue:(\d{4}-\d{2}-\d{2})\b", stripped)
+            if not due_match:
+                continue
+
+            due_date = due_match.group(1)
+
+            # Only include if due date is strictly before today
+            if due_date < today:
+                overdue.append((due_date, stripped))
+
+        # Sort by due date ascending — most overdue first
+        overdue.sort(key=lambda x: x[0])
+        return overdue
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _load_open_todos(self) -> list[str]:
