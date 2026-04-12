@@ -1519,6 +1519,159 @@ def todo(
     typer.echo("\n✅ Done.\n")
 
 
+@app.command()
+def update(
+    scan: Annotated[
+        bool,
+        typer.Option("--scan", help="Scan daily summary and draft Jira comments."),
+    ] = False,
+    date: Annotated[
+        str | None,
+        typer.Option("--date", "-d", help="Date to scan (YYYY-MM-DD)."),
+    ] = None,
+    list_updates: Annotated[
+        bool,
+        typer.Option("--list", help="List all update drafts."),
+    ] = False,
+    show: Annotated[
+        str | None,
+        typer.Option("--show", help="Show draft for a ticket ID (e.g. CS-15011)."),
+    ] = None,
+    approve: Annotated[
+        str | None,
+        typer.Option("--approve", help="Approve draft and print comment to screen."),
+    ] = None,
+    reject: Annotated[
+        str | None,
+        typer.Option("--reject", help="Reject draft for a ticket ID."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing files."),
+    ] = False,
+) -> None:
+    """
+    **Update** — draft and manage Jira update comments from daily summaries.
+
+    Scans the composed daily summary for Jira ticket IDs, drafts a
+    progress comment per ticket via local LLM, and manages the draft
+    lifecycle (pending → approved / rejected).
+
+    Examples:
+
+        brain update --scan --date 2026-04-10
+
+        brain update --scan --date 2026-04-10 --dry-run
+
+        brain update --list
+
+        brain update --show cs-15011
+
+        brain update --approve cs-15011
+
+        brain update --reject cs-15011
+    """
+    from brain.update_suggester import UpdateSuggester
+
+    _print_header("Update Suggester")
+    cfg = _get_config()
+
+    try:
+        suggester = UpdateSuggester(cfg)
+
+        # ── --scan ────────────────────────────────────────────────────────────
+        if scan:
+            if not date:
+                typer.echo(
+                    "\n❌ --scan requires --date YYYY-MM-DD",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+
+            result = suggester.scan(date=date, dry_run=dry_run)
+
+            typer.echo()
+            typer.echo("─" * 40)
+            typer.echo(f"  Tickets found  : {len(result.tickets_found)}")
+            typer.echo(f"  Drafts written : {len(result.drafts_written)}")
+            typer.echo(f"  Drafts skipped : {len(result.drafts_skipped)}")
+
+            if result.warnings:
+                typer.echo()
+                for w in result.warnings:
+                    typer.echo(f"  ⚠️  {w}")
+
+            if result.drafts_written:
+                typer.echo()
+                typer.echo("  Next steps:")
+                typer.echo("    brain update --list")
+                for tid in result.drafts_written:
+                    typer.echo(f"    brain update --show {tid}")
+                    typer.echo(f"    brain update --approve {tid}  (or --reject)")
+            typer.echo("─" * 40)
+
+        # ── --list ────────────────────────────────────────────────────────────
+        elif list_updates:
+            drafts = suggester.list_drafts()
+
+            if not drafts:
+                typer.echo("\n   No update drafts found.")
+                typer.echo("   Run: brain update --scan --date YYYY-MM-DD")
+            else:
+                typer.echo(f"\n{'  TICKET':<16} {'DATE':<14} {'STATUS':<12} FILE")
+                typer.echo("  " + "─" * 60)
+                for d in drafts:
+                    status_icon = {
+                        "pending": "⏳",
+                        "approved": "✅",
+                        "rejected": "🗑️ ",
+                    }.get(d.status.value, "?")
+                    typer.echo(
+                        f"  {d.ticket_id:<14} {d.date:<14} "
+                        f"{status_icon} {d.status.value:<10} {d.path.name}"
+                    )
+
+        # ── --show ────────────────────────────────────────────────────────────
+        elif show:
+            content = suggester.show(ticket_id=show)
+            typer.echo()
+            typer.echo(content)
+
+        # ── --approve ─────────────────────────────────────────────────────────
+        elif approve:
+            suggester.approve(ticket_id=approve)
+
+        # ── --reject ──────────────────────────────────────────────────────────
+        elif reject:
+            suggester.reject(ticket_id=reject)
+
+        # ── no flag ───────────────────────────────────────────────────────────
+        else:
+            drafts = suggester.list_drafts()
+            pending = [d for d in drafts if d.status.value == "pending"]
+            typer.echo(f"\n   {len(pending)} pending draft(s) in exports/updates/")
+            typer.echo()
+            typer.echo("   brain update --scan --date YYYY-MM-DD   draft comments")
+            typer.echo("   brain update --list                      list all drafts")
+            typer.echo("   brain update --show TICKET               show draft")
+            typer.echo("   brain update --approve TICKET            approve + print")
+            typer.echo("   brain update --reject TICKET             reject draft")
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except ValueError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
