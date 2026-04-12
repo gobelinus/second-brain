@@ -388,8 +388,10 @@ reminder:
     - [ ] Check todos: `brain todo --suggest`
     - [ ] Commit public summary: `git add daily/public/{date}.md && git commit`
 
-    ## Yesterday's Status
+    ## ⚠️ Overdue Todos
+    {overdue_todos}
 
+    ## Yesterday's Status
     {yesterday_status}
 
     ### 3. ✍️ Write + Ingest Public Summary
