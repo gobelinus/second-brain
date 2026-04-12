@@ -1099,3 +1099,54 @@ dump:
     > **Source:** {source_file}
 
     {original_notes}
+
+# -----------------------------------------------------------------------------
+# Update Suggester — Phase 6b
+#
+# brain update --scan --date YYYY-MM-DD
+#   → reads daily/sensitive/YYYY-MM-DD.md
+#   → detects Jira IDs
+#   → drafts comment per ticket using local LLM
+#   → writes to exports/updates/YYYY-MM-DD-TICKET-draft.md
+#
+# brain update --list / --show / --approve / --reject
+#   → file-based state management, no SQLite
+#   → approve/reject prints to screen only (MCP deferred)
+# -----------------------------------------------------------------------------
+updates:
+  # Output directory for draft update files
+  output_dir: "exports/updates"
+
+  # Draft filename pattern
+  # Placeholders: {date}, {ticket_id}
+  draft_filename_pattern: "{date}-{ticket_id}-draft.md"
+
+  # Approved filename pattern — rename on approve
+  approved_filename_pattern: "{date}-{ticket_id}-approved.md"
+
+  # Rejected filename pattern — rename on reject
+  rejected_filename_pattern: "{date}-{ticket_id}-rejected.md"
+
+  # Jira ticket ID pattern — same as mcp.jira.ticket_id_pattern
+  ticket_id_pattern: "[A-Z]{2,9}-\\d+"
+
+  # LLM prompt for drafting a Jira comment from the daily summary
+  # Placeholders: {ticket_id}, {date}, {summary_context}
+  comment_prompt_template: |
+    You are drafting a concise Jira comment to update a ticket with today's progress.
+    Write from the perspective of the engineer who worked on this ticket today.
+
+    The comment should:
+    - Summarise what was done today on this ticket specifically
+    - Note any blockers encountered
+    - State clear next steps
+    - Be professional and concise (5-10 lines max)
+    - Be written in first person
+
+    Output ONLY the comment text. No preamble, no markdown headers, no commentary.
+    Do not include the ticket ID or date in the comment body — Jira adds those automatically.
+
+    Ticket: {ticket_id}
+    Date: {date}
+    Context from today's summary:
+    {summary_context}

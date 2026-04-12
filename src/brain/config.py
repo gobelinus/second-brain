@@ -834,3 +834,44 @@ class BrainConfig:
     def calendar_output_path(self, date: str) -> Path:
         """Full path to daily_meetings.md for a given date."""
         return self.inputs / date / self.calendar_output_filename
+
+    # ── Update Suggester — Phase 6b ───────────────────────────────────────────────
+
+    @property
+    def updates_output_dir(self) -> Path:
+        """Root directory for all update draft files."""
+        return self.project_root / self._cfg["updates"]["output_dir"]
+
+    def updates_draft_path(self, date: str, ticket_id: str) -> Path:
+        """Full path for a draft update file."""
+        filename = self._cfg["updates"]["draft_filename_pattern"].format(
+            date=date,
+            ticket_id=ticket_id.upper(),
+        )
+        return self.updates_output_dir / filename
+
+    def updates_approved_path(self, date: str, ticket_id: str) -> Path:
+        """Full path for an approved update file."""
+        filename = self._cfg["updates"]["approved_filename_pattern"].format(
+            date=date,
+            ticket_id=ticket_id.upper(),
+        )
+        return self.updates_output_dir / filename
+
+    def updates_rejected_path(self, date: str, ticket_id: str) -> Path:
+        """Full path for a rejected update file."""
+        filename = self._cfg["updates"]["rejected_filename_pattern"].format(
+            date=date,
+            ticket_id=ticket_id.upper(),
+        )
+        return self.updates_output_dir / filename
+
+    @property
+    def updates_ticket_pattern(self) -> str:
+        """Regex pattern for detecting Jira ticket IDs."""
+        return self._cfg["updates"]["ticket_id_pattern"]
+
+    @property
+    def updates_comment_prompt_template(self) -> str:
+        """LLM prompt template for drafting Jira comments."""
+        return self._cfg["updates"]["comment_prompt_template"]
