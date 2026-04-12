@@ -56,18 +56,27 @@ class Reminder:
         print(f"   Date      : {today}")
         print()
 
+        # ── Step 1: Check overdue todos ───────────────────────────────────────
+        print("  [1/4] Checking overdue todos...")
+        overdue_todos = self._check_overdue_todos()
+        overdue_count = overdue_todos.count("\n- ")
+        if overdue_count:
+            print(f"        ⚠️  {overdue_count} overdue item(s) found")
+        else:
+            print("        ✅ No overdue todos")
+
         # ── Step 1: Check yesterday's ingest status ───────────────────────────
-        print("  [1/3] Checking yesterday's ingest status...")
+        print("  [2/4] Checking yesterday's ingest status...")
         yesterday_status = self._check_ingest_status(yesterday)
         print(f"        {yesterday} → {yesterday_status}")
 
         # ── Step 2: Send macOS notification ───────────────────────────────────
-        print("  [2/3] Sending macOS notification...")
+        print("  [3/4] Sending macOS notification...")
         self._send_notification(today)
         print("        Notification sent ✅")
 
         # ── Step 3: Write checklist ────────────────────────────────────────────
-        print("  [3/3] Writing checklist...")
+        print("  [4/4] Writing checklist...")
         checklist_path = self._write_checklist(today, yesterday_status)
         print(f"        Written: {checklist_path}")
 
@@ -230,6 +239,33 @@ class Reminder:
         except Exception as e:
             return f"⚠️  Could not check status: {e}"
 
+    def _check_overdue_todos(self) -> str:
+        """
+        Check for overdue todos and return a human-readable status string.
+        Mirrors _check_ingest_status() pattern — returns a string for template injection.
+        """
+        from brain.todo_matcher import TodoMatcher
+
+        try:
+            matcher = TodoMatcher(self.config)
+            overdue = matcher.list_overdue()
+
+            if not overdue:
+                return "✅ No overdue todos"
+
+            lines = [f"**{len(overdue)} overdue item(s):**\n"]
+            for due_date, raw_line in overdue:
+                lines.append(f"- `due:{due_date}` — {raw_line}")
+
+            lines.append(
+                "\n> Run `brain todo --overdue` to review. "
+                "Run `brain todo --close <id>` to close completed items."
+            )
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"⚠️  Could not check overdue todos: {e}"
+
     def _send_notification(self, today: str) -> None:
         """
         Send a macOS notification via osascript.
@@ -257,7 +293,12 @@ class Reminder:
         except subprocess.CalledProcessError as e:
             print(f"        ⚠️  Notification failed: {e.stderr.decode().strip()}")
 
-    def _write_checklist(self, today: str, yesterday_status: str) -> Path:
+    def _write_checklist(
+        self,
+        today: str,
+        yesterday_status: str,
+        overdue_todos: str = "✅ No overdue todos",
+    ) -> Path:
         """
         Write a dated checklist markdown file to exports/reminders/.
         Returns the path to the written file.
@@ -273,6 +314,7 @@ class Reminder:
             date=today,
             timestamp=timestamp,
             yesterday_status=yesterday_status,
+            overdue_todos=overdue_todos,
         )
 
         output_path.write_text(content, encoding="utf-8")
