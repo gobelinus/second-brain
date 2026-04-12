@@ -840,7 +840,7 @@ class BrainConfig:
     @property
     def updates_output_dir(self) -> Path:
         """Root directory for all update draft files."""
-        return self.project_root / self._cfg["updates"]["output_dir"]
+        return ROOT / self._cfg["updates"]["output_dir"]
 
     def updates_draft_path(self, date: str, ticket_id: str) -> Path:
         """Full path for a draft update file."""

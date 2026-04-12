@@ -133,6 +133,18 @@ class UpdateSuggester:
         summary_content = summary_path.read_text(encoding="utf-8")
         print(f"\n🔍 Scanning: {summary_path.name}")
 
+        # ── Step 1b: Verify Ollama is reachable ──────────────────────────────────
+        try:
+            health = requests.get(
+                f"{self.config.ollama_base_url}",
+                timeout=5,
+            )
+            health.raise_for_status()
+        except Exception:
+            raise RuntimeError(
+                f"Ollama not reachable at {self.config.ollama_base_url}\n"
+                f"Start it with: ollama serve"
+            ) from None
         # ── Step 2: Detect Jira IDs ───────────────────────────────────────────
         ticket_ids = _extract_ticket_ids(
             summary_content, self.config.updates_ticket_pattern
@@ -192,7 +204,10 @@ class UpdateSuggester:
                 print(f"   {'─' * 54}")
                 for line in draft_content.splitlines()[:10]:
                     print(f"   {line}")
+                if len(draft_content.splitlines()) > 10:
+                    print(f"   ... ({len(draft_content.splitlines())} lines total)")
                 print(f"   {'─' * 54}")
+                result.drafts_written.append(ticket_id)  # ← count it in dry run too
             else:
                 draft_path.write_text(draft_content, encoding="utf-8")
                 print(f"   ✅ Written: {draft_path.name}")
@@ -323,18 +338,12 @@ class UpdateSuggester:
         )
 
     # ── LLM Integration ───────────────────────────────────────────────────────
-
     def _draft_comment(
         self,
         ticket_id: str,
         date: str,
         summary_context: str,
     ) -> str:
-        """
-        Call local Ollama LLM to draft a Jira comment.
-
-        Returns comment body string, or empty string on failure.
-        """
         prompt = self.config.updates_comment_prompt_template.format(
             ticket_id=ticket_id,
             date=date,
@@ -357,13 +366,18 @@ class UpdateSuggester:
                 timeout=self.config.ollama_timeout,
             )
             response.raise_for_status()
-            return response.json().get("response", "").strip()
+            result = response.json().get("response", "").strip()
+            if not result:
+                print(f"   ⚠️  LLM returned empty response for {ticket_id}")
+                print(f"        Model: {self.config.ollama_llm_model}")
+                print(f"        URL  : {self.config.ollama_base_url}")
+            return result
 
         except requests.exceptions.ConnectionError:
             print(f"   ⚠️  Ollama not reachable at {self.config.ollama_base_url}")
             return ""
         except requests.exceptions.Timeout:
-            print("   ⚠️  Ollama timed out — try again or check model load")
+            print(f"   ⚠️  Ollama timed out after {self.config.ollama_timeout}s")
             return ""
         except Exception as e:
             print(f"   ⚠️  LLM error: {type(e).__name__}: {e}")
