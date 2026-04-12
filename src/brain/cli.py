@@ -1366,6 +1366,13 @@ def todo(
         bool,
         typer.Option("--all", help="Include completed todos when listing."),
     ] = False,
+    overdue: Annotated[
+        bool,
+        typer.Option(
+            "--overdue",
+            help="List all open todos with a past due date.",
+        ),
+    ] = False,
     close: Annotated[
         str | None,
         typer.Option(
@@ -1405,6 +1412,8 @@ def todo(
         brain todo --suggest
 
         brain todo --suggest --medium
+
+                brain todo --overdue
     """
     from datetime import date as date_type
 
@@ -1499,6 +1508,25 @@ def todo(
                     typer.echo("     brain todo --close <id>")
                     if matches[0].todo_id:
                         typer.echo(f"     e.g. brain todo --close {matches[0].todo_id}")
+
+        # ── --overdue ─────────────────────────────────────────────────────────
+        elif overdue:
+            from datetime import date as date_type
+
+            today = date_type.today().isoformat()
+            items = matcher.list_overdue()
+
+            if not items:
+                typer.echo("\n   ✅ No overdue todos")
+            else:
+                typer.echo(f"\n   ⚠️  {len(items)} overdue item(s) as of {today}\n")
+                typer.echo("─" * 40)
+                for due_date, raw_line in items:
+                    typer.echo(f"  due:{due_date}  {raw_line}")
+                typer.echo("─" * 40)
+                typer.echo()
+                typer.echo("  To close a completed item:")
+                typer.echo("    brain todo --close <id>")
 
         # ── no flag — show help hint ──────────────────────────────────────────
         else:
