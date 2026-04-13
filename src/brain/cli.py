@@ -14,6 +14,7 @@ Built with Typer. Exposes clean, memorable commands:
   brain dashboard — launch the Streamlit dashboard
   brain update    — update jira etc comments
   brain enrich    — enrich tickets / docs etc with data
+  brain clean     — clean directories which has been ingested
 
 Every output command supports --export to write a dated markdown file.
 """
@@ -1778,6 +1779,125 @@ def enrich(
     else:
         typer.echo("\n❌ Enrichment failed.\n")
         raise typer.Exit(code=2)
+
+
+@app.command()
+def clean(
+    date: Annotated[
+        str | None,
+        typer.Option(
+            "--date",
+            "-d",
+            help="Date to clean (YYYY-MM-DD).",
+        ),
+    ] = None,
+    all_dates: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Clean all safely cleanable dates.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Show what would be removed without removing.",
+        ),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Skip confirmation prompt.",
+        ),
+    ] = False,
+    status: Annotated[
+        bool,
+        typer.Option(
+            "--status",
+            help="Show all cleanable dates.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Clean** — safely remove processed inputs/ directories.
+
+    Two safety checks run before any deletion:
+      1. Date must be ingested in SQLite
+      2. inputs/archive/YYYY-MM-DD/ must exist
+
+    What gets removed vs kept:
+
+      REMOVES : inputs/YYYY-MM-DD/
+      KEEPS   : inputs/archive/YYYY-MM-DD/
+      KEEPS   : daily/sensitive/YYYY-MM-DD.md
+      KEEPS   : store/ (SQLite + ChromaDB)
+
+    Examples:
+
+        brain clean --status
+
+        brain clean --date 2026-04-01 --dry-run
+
+        brain clean --date 2026-04-01
+
+        brain clean --date 2026-04-01 --yes
+
+        brain clean --all --dry-run
+
+        brain clean --all
+    """
+    from brain.cleaner import Cleaner
+
+    _print_header("Brain Clean")
+    cfg = _get_config()
+
+    try:
+        cleaner = Cleaner(cfg)
+
+        # ── --status ──────────────────────────────────────────────────────────
+        if status:
+            cleaner.status()
+
+        # ── --all ─────────────────────────────────────────────────────────────
+        elif all_dates:
+            results = cleaner.clean_all(dry_run=dry_run, yes=yes)
+
+            if results:
+                cleaned = sum(1 for r in results if r.cleaned)
+                skipped = sum(1 for r in results if r.skipped)
+                typer.echo()
+                typer.echo("─" * 40)
+                typer.echo(f"  Cleaned : {cleaned}")
+                typer.echo(f"  Skipped : {skipped}")
+                typer.echo("─" * 40)
+
+        # ── --date ────────────────────────────────────────────────────────────
+        elif date:
+            result = cleaner.clean(date=date, dry_run=dry_run, yes=yes)
+
+            if result.skipped and not result.skip_reason.startswith("inputs/"):
+                # Blocked by safety check — exit 1
+                raise typer.Exit(code=1)
+
+        # ── no flag ───────────────────────────────────────────────────────────
+        else:
+            typer.echo()
+            typer.echo("   brain clean --status              show cleanable dates")
+            typer.echo("   brain clean --date YYYY-MM-DD     clean single date")
+            typer.echo("   brain clean --all                 clean all safe dates")
+            typer.echo("   brain clean --all --dry-run       preview first")
+
+    except typer.Exit:
+        raise
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo("\n✅ Done.\n")
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
