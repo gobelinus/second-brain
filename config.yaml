@@ -1152,3 +1152,35 @@ updates:
     Date: {date}
     Context from today's summary:
     {summary_context}
+
+# -----------------------------------------------------------------------------
+# Enrich — Phase 7a: brain enrich automation
+#
+# brain enrich --date YYYY-MM-DD
+#   → scp inputs/YYYY-MM-DD/ to remote (excluding enriched/)
+#   → ssh: python enricher.py --date YYYY-MM-DD
+#   → scp enriched/ back to local inputs/YYYY-MM-DD/enriched/
+#
+# Uses SSH config alias — no user/port/key needed in config.
+# Set host in config.local.yaml to match your ~/.ssh/config alias.
+# -----------------------------------------------------------------------------
+enrich:
+  remote:
+    # SSH config alias — matches entry in ~/.ssh/config
+    # Override in config.local.yaml: enrich.remote.host: "workstation"
+    host: "workstation"
+
+    # Path to brain project on remote server
+    brain_dir: "~/brain"
+
+  # Directories to exclude from upload (relative to inputs/YYYY-MM-DD/)
+  # enriched/ is written by remote — no point uploading it back
+  upload_exclude:
+    - "enriched"
+
+  # SSH timeout in seconds for the remote enricher.py run
+  # Long enrichments (many tasks + Jira context) can take a while
+  ssh_timeout: 300
+
+  # Stream remote stdout live — see enricher.py progress in real time
+  stream_output: true

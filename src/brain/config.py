@@ -875,3 +875,48 @@ class BrainConfig:
     def updates_comment_prompt_template(self) -> str:
         """LLM prompt template for drafting Jira comments."""
         return self._cfg["updates"]["comment_prompt_template"]
+
+    # ── Enrich — Phase 7a ─────────────────────────────────────────────────────────
+
+    @property
+    def enrich_remote_host(self) -> str:
+        """SSH config alias for remote enrichment server."""
+        return self._cfg.get("enrich", {}).get("remote", {}).get("host", "workstation")
+
+    @property
+    def enrich_remote_brain_dir(self) -> str:
+        """Path to brain project on remote server."""
+        return self._cfg.get("enrich", {}).get("remote", {}).get("brain_dir", "~/brain")
+
+    @property
+    def enrich_upload_exclude(self) -> list[str]:
+        """Directory names to exclude from upload to remote."""
+        return self._cfg.get("enrich", {}).get("upload_exclude", ["enriched"])
+
+    @property
+    def enrich_ssh_timeout(self) -> int:
+        """SSH timeout in seconds for remote enricher.py run."""
+        return self._cfg.get("enrich", {}).get("ssh_timeout", 300)
+
+    @property
+    def enrich_stream_output(self) -> bool:
+        """Stream remote stdout live to terminal."""
+        return self._cfg.get("enrich", {}).get("stream_output", True)
+
+    def enrich_local_inputs_path(self, date: str) -> Path:
+        """Full path to local inputs/YYYY-MM-DD/"""
+        return self.inputs / date
+
+    def enrich_local_enriched_path(self, date: str) -> Path:
+        """Full path to local inputs/YYYY-MM-DD/enriched/"""
+        return self.inputs / date / self.enricher_output_dir
+
+    def enrich_remote_inputs_path(self, date: str) -> str:
+        """Full path to remote inputs/YYYY-MM-DD/ as string for scp/ssh."""
+        return f"{self.enrich_remote_brain_dir}/inputs/{date}"
+
+    def enrich_remote_enriched_path(self, date: str) -> str:
+        """Full path to remote inputs/YYYY-MM-DD/enriched/ as string for scp."""
+        return (
+            f"{self.enrich_remote_brain_dir}/inputs/{date}/{self.enricher_output_dir}"
+        )
