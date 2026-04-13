@@ -12,6 +12,8 @@ Built with Typer. Exposes clean, memorable commands:
   brain summarize — summarize a date range (Phase 3 ✅)
   brain status    — show store stats and config
   brain dashboard — launch the Streamlit dashboard
+  brain update    — update jira etc comments
+  brain enrich    — enrich tickets / docs etc with data
 
 Every output command supports --export to write a dated markdown file.
 """
@@ -1698,6 +1700,84 @@ def update(
         raise typer.Exit(code=1) from e
 
     typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def enrich(
+    date: Annotated[
+        str,
+        typer.Option(
+            "--date",
+            "-d",
+            help="Date to enrich (YYYY-MM-DD).",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print commands without executing.",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Pass --verbose to remote enricher.py.",
+        ),
+    ] = False,
+) -> None:
+    """
+    **Enrich** — automate remote enrichment pipeline for a given date.
+
+    Collapses the manual scp + ssh + scp workflow into a single command:
+
+        1. Upload inputs/YYYY-MM-DD/ to remote (excluding enriched/)
+        2. Run enricher.py --date YYYY-MM-DD on remote
+        3. Download enriched/ back to local inputs/YYYY-MM-DD/enriched/
+
+    Requires rsync and ssh to be available. Uses SSH config alias —
+    set enrich.remote.host in config.local.yaml to match your ~/.ssh/config.
+
+    Examples:
+
+        brain enrich --date 2026-04-10
+
+        brain enrich --date 2026-04-10 --dry-run
+
+        brain enrich --date 2026-04-10 --verbose
+    """
+    from brain.enrich_runner import EnrichRunner
+
+    _print_header("Remote Enrichment")
+    cfg = _get_config()
+
+    try:
+        runner = EnrichRunner(cfg)
+        result = runner.run(date=date, dry_run=dry_run, verbose=verbose)
+
+    except FileNotFoundError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except RuntimeError as e:
+        typer.echo(f"\n❌ {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    except Exception as e:
+        typer.echo(f"\n❌ Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # ── Exit code mirrors remote enricher.py ─────────────────────────────────
+    if result.remote_exit == 0:
+        typer.echo("\n✅ Done.\n")
+    elif result.remote_exit == 1:
+        typer.echo("\n⚠️  Partial enrichment — check warnings above.\n")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo("\n❌ Enrichment failed.\n")
+        raise typer.Exit(code=2)
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
