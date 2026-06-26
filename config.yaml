@@ -7,22 +7,24 @@
 
 # -----------------------------------------------------------------------------
 # Paths — all relative to project root
+# Phase 0 (second-brain layout): durable knowledge → vault/, transient → runtime/.
+# exports/ stays at repo root for now (revisit in a later phase).
 # -----------------------------------------------------------------------------
 paths:
-  daily_public: "daily/public"
-  daily_sensitive: "daily/sensitive"
-  inputs: "inputs"
-  inputs_archive: "inputs/archive"
+  daily_public: "vault/daily/public"
+  daily_sensitive: "vault/daily/sensitive"
+  inputs: "runtime/inputs"
+  inputs_archive: "runtime/inputs/archive"
   exports_public: "exports/public"
   exports_sensitive: "exports/sensitive"
   exports_reminders: "exports/reminders"
-  store_chroma: "store/chroma"
-  store_sqlite: "store/brain.db"
+  store_chroma: "runtime/store/chroma"
+  store_sqlite: "runtime/store/brain.db"
   launchd: "launchd"
   todo_txt: "todo.txt"                  # rolling todo.txt at project root
   exports_todos: "exports/todos"        # git ignored, dated per-day backups (future)
-  blogs_public: "blogs/public"
-  blogs_sensitive: "blogs/sensitive"
+  blogs_public: "vault/blogs/public"
+  blogs_sensitive: "vault/blogs/sensitive"
 
 # -----------------------------------------------------------------------------
 # Ollama / LLM settings

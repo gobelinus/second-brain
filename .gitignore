@@ -219,11 +219,16 @@ wheels/
 # ────────────────────────────────────────────────────
 
 # ── Sensitive brain content ──────────────────────────────
-daily/sensitive/
+# Phase 0 (second-brain): vault/ is committed in full incl. sensitive/ —
+# private repo = full backup; sensitivity is a content classification, not a
+# git gate (the secret scanner still guards raw credentials). So vault/daily/
+# and vault/blogs/ sensitive content is intentionally NOT ignored.
+# exports/ remains at repo root and local-only for now.
 exports/sensitive/
 
-# ── Generated / binary stores ────────────────────────────
-store/
+# ── Generated / binary stores (regenerable from vault/ + engine/) ─────────
+# runtime/ holds store/ (chroma + brain.db) + inputs/ — all rebuildable.
+runtime/
 *.db
 *.sqlite
 
@@ -242,9 +247,7 @@ __pycache__/
 Thumbs.db
 
 # --- Phase 1b additions ------------------------------------------------------
-
-# Raw daily input files (pre-compose, may contain sensitive data)
-inputs/
+# Raw daily input files (pre-compose) now live under runtime/ — covered above.
 
 # macOS launchd plist — contains local username + absolute paths
 launchd/
@@ -252,4 +255,3 @@ launchd/
 # Auto-generated daily reminder checklists — local only, not useful in git
 exports/reminders/
 todo.txt
-blogs/sensitive/
