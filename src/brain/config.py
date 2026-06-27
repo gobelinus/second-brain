@@ -125,6 +125,18 @@ class BrainConfig:
         return ROOT / self._cfg["paths"]["store_sqlite"]
 
     @property
+    def journal_dir(self) -> Path:
+        return ROOT / self._cfg["paths"]["journal"]
+
+    @property
+    def deltas_dir(self) -> Path:
+        return ROOT / self._cfg["paths"]["deltas"]
+
+    @property
+    def wiki_dir(self) -> Path:
+        return ROOT / self._cfg["paths"]["wiki"]
+
+    @property
     def launchd_dir(self) -> Path:
         return ROOT / self._cfg["paths"]["launchd"]
 

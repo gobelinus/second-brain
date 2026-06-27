@@ -27,6 +27,7 @@ import typer
 from brain.calendar_puller import CalendarPuller
 from brain.composer import Composer
 from brain.config import BrainConfig
+from brain.delta_backfill import DeltaBackfiller
 from brain.dump import DumpParser
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
@@ -1897,6 +1898,80 @@ def clean(
         typer.echo(f"\n❌ Unexpected error: {e}", err=True)
         raise typer.Exit(code=1) from e
 
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command(name="backfill-deltas")
+def backfill_deltas(
+    date: Annotated[
+        str,
+        typer.Option("--date", "-d", help="Only this journal date (YYYY-MM-DD)."),
+    ] = "",
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Re-emit deltas even if they exist."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report what would be written; write nothing."),
+    ] = False,
+) -> None:
+    """
+    **Backfill** session deltas from journals (deterministic, no LLM).
+
+    Emits one `vault/deltas/DATE--slug.json` per session block from the
+    journals under `vault/journal/`. Idempotent — skips existing deltas unless
+    `--overwrite`. This is the historical counterpart to the live
+    `session-checkpoint` delta emission.
+
+    Examples:
+
+        brain backfill-deltas --dry-run
+
+        brain backfill-deltas
+
+        brain backfill-deltas --date 2026-06-24 --overwrite
+    """
+    _print_header("Backfilling session deltas")
+    cfg = _get_config()
+
+    if not cfg.journal_dir.exists():
+        typer.echo(f"\n❌ Journal dir not found: {cfg.journal_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        backfiller = DeltaBackfiller(cfg)
+        if dry_run:
+            # Parse only — count blocks and report, write nothing.
+            from brain.journal_parser import iter_journals, parse_checkpoint_file
+
+            files = blocks = existing = 0
+            for journal in iter_journals(cfg.journal_dir):
+                if date and not journal.name.startswith(date):
+                    continue
+                files += 1
+                for block in parse_checkpoint_file(journal):
+                    blocks += 1
+                    out = cfg.deltas_dir / f"{block.date}--{block.slug}.json"
+                    if out.exists():
+                        existing += 1
+            typer.echo(
+                f"\n   Journals: {files}   Blocks: {blocks}   "
+                f"Already have deltas: {existing}   Would write: {blocks - existing}"
+            )
+            typer.echo("\n   (dry run — nothing written)")
+            return
+
+        stats = backfiller.backfill(only_date=date or None, overwrite=overwrite)
+    except Exception as e:
+        typer.echo(f"\n❌ Backfill error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo(
+        f"\n   Journals: {stats['files']}   Blocks: {stats['blocks']}   "
+        f"Written: {stats['written']}   Skipped (exists): {stats['skipped']}"
+    )
+    typer.echo(f"   → {cfg.deltas_dir}")
     typer.echo("\n✅ Done.\n")
 
 

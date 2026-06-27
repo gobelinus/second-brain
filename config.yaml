@@ -20,6 +20,9 @@ paths:
   exports_reminders: "exports/reminders"
   store_chroma: "runtime/store/chroma"
   store_sqlite: "runtime/store/brain.db"
+  journal: "vault/journal"              # checkpoint journals (source of truth)
+  deltas: "vault/deltas"                # machine-readable session deltas
+  wiki: "vault/wiki"                    # Karpathy-style synthesis layer
   launchd: "launchd"
   todo_txt: "todo.txt"                  # rolling todo.txt at project root
   exports_todos: "exports/todos"        # git ignored, dated per-day backups (future)
