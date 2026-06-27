@@ -28,6 +28,7 @@ from brain.calendar_puller import CalendarPuller
 from brain.composer import Composer
 from brain.config import BrainConfig
 from brain.delta_backfill import DeltaBackfiller
+from brain.delta_ingest import DeltaIngestPipeline
 from brain.dump import DumpParser
 from brain.exporter import Exporter
 from brain.ingest import IngestPipeline
@@ -1972,6 +1973,79 @@ def backfill_deltas(
         f"Written: {stats['written']}   Skipped (exists): {stats['skipped']}"
     )
     typer.echo(f"   → {cfg.deltas_dir}")
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command(name="ingest-delta")
+def ingest_delta(
+    date: Annotated[
+        str,
+        typer.Option("--date", "-d", help="Only this date (YYYY-MM-DD); default all."),
+    ] = "",
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report what would be ingested; store nothing."),
+    ] = False,
+) -> None:
+    """
+    **Ingest** session deltas into the RAG stores (trusts the delta, no LLM).
+
+    Aggregates each date's deltas per sensitivity, embeds the raw journal block
+    text, and writes one SQLite entry + ChromaDB chunk set per
+    (date, sensitivity). Idempotent — re-ingesting a date replaces it.
+
+    Examples:
+
+        brain ingest-delta --dry-run
+
+        brain ingest-delta
+
+        brain ingest-delta --date 2026-06-24
+    """
+    _print_header("Ingesting session deltas")
+    cfg = _get_config()
+
+    if not cfg.deltas_dir.exists():
+        typer.echo(f"\n❌ Deltas dir not found: {cfg.deltas_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        pipeline = DeltaIngestPipeline(cfg)
+        targets = [date] if date else pipeline.dates()
+        if not targets:
+            typer.echo("\n   No deltas found. Run `brain backfill-deltas` first.")
+            return
+
+        if dry_run:
+            import json as _json
+
+            typer.echo(f"\n   Dates: {len(targets)}")
+            for d in targets:
+                files = sorted(cfg.deltas_dir.glob(f"{d}--*.json"))
+                sens = {}
+                for f in files:
+                    s = _json.loads(f.read_text()).get("sensitivity", "sensitive")
+                    sens[s] = sens.get(s, 0) + 1
+                breakdown = ", ".join(f"{k}:{v}" for k, v in sorted(sens.items()))
+                typer.echo(f"     {d}  ({len(files)} blocks → {breakdown})")
+            typer.echo("\n   (dry run — nothing stored)")
+            return
+
+        if date:
+            results = pipeline.ingest_date(date)
+            entries = len(results)
+            chunks = sum(r["chunks"] for r in results)
+            typer.echo(f"\n   {date}: {entries} entr(y/ies), {chunks} chunk(s)")
+        else:
+            stats = pipeline.ingest_all()
+            typer.echo(
+                f"\n   Dates: {stats['dates']}   Entries: {stats['entries']}   "
+                f"Chunks: {stats['chunks']}"
+            )
+    except Exception as e:
+        typer.echo(f"\n❌ Ingest-delta error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
     typer.echo("\n✅ Done.\n")
 
 
