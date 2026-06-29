@@ -35,6 +35,7 @@ from brain.ingest import IngestPipeline
 from brain.query import RAGEngine
 from brain.reminder import Reminder
 from brain.trend import TrendEngine, TrendFormatter
+from brain.wiki import WikiBuilder
 
 # ── App Setup ─────────────────────────────────────────────────────────────────
 
@@ -2047,6 +2048,180 @@ def ingest_delta(
         raise typer.Exit(code=1) from e
 
     typer.echo("\n✅ Done.\n")
+
+
+@app.command(name="wiki-rebuild")
+def wiki_rebuild(
+    type_: Annotated[
+        str,
+        typer.Option(
+            "--type", "-t", help="Only this entity type: projects|jira|people."
+        ),
+    ] = "",
+    entity: Annotated[
+        str,
+        typer.Option("--entity", "-e", help="Only this exact entity name."),
+    ] = "",
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit", help="Max pages to write (for sampling). 0 = no limit."
+        ),
+    ] = 0,
+    no_synth: Annotated[
+        bool,
+        typer.Option(
+            "--no-synth", help="Skip the LLM synthesis (evidence-only, fast)."
+        ),
+    ] = False,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite/--no-overwrite", help="Overwrite existing pages."),
+    ] = True,
+) -> None:
+    """
+    **Rebuild** the wiki from the full delta corpus.
+
+    Generates one page per project / jira ticket / person under
+    `vault/wiki/<sensitivity>/<type>/`, each claim carrying a provenance
+    backlink to its journal block. Technologies appear as inline tags.
+
+    Examples:
+
+        brain wiki-rebuild --type projects --limit 3 --no-synth   # quick sample
+
+        brain wiki-rebuild --entity ip_whitelist
+
+        brain wiki-rebuild                                        # full (LLM-heavy)
+    """
+    _print_header("Rebuilding wiki")
+    cfg = _get_config()
+    try:
+        builder = WikiBuilder(cfg)
+        stats = builder.rebuild(
+            only_types=[type_] if type_ else None,
+            only_entity=entity or None,
+            limit=limit or None,
+            synth=not no_synth,
+            overwrite=overwrite,
+        )
+    except Exception as e:
+        typer.echo(f"\n❌ Wiki rebuild error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    typer.echo(f"\n   Pages written: {stats['written']}   Skipped: {stats['skipped']}")
+    typer.echo(f"   → {cfg.wiki_dir}")
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command(name="wiki-apply")
+def wiki_apply(
+    date: Annotated[
+        str,
+        typer.Option("--date", "-d", help="Journal date whose entities to refresh."),
+    ],
+    no_synth: Annotated[
+        bool, typer.Option("--no-synth", help="Skip LLM synthesis.")
+    ] = False,
+) -> None:
+    """
+    **Apply** one date's deltas into the wiki (incremental fold).
+
+    Regenerates only the pages for entities touched on `--date`, scoped-rebuilt
+    from the full corpus so they can never drift from the source.
+
+        brain wiki-apply --date 2026-06-24
+    """
+    _print_header("Applying deltas to wiki")
+    cfg = _get_config()
+    try:
+        stats = WikiBuilder(cfg).apply(date, synth=not no_synth)
+    except Exception as e:
+        typer.echo(f"\n❌ Wiki apply error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"\n   {date}: {stats['written']} page(s) refreshed")
+    typer.echo("\n✅ Done.\n")
+
+
+@app.command()
+def backfill(
+    skip_deltas: Annotated[
+        bool, typer.Option("--skip-deltas", help="Skip the delta extraction stage.")
+    ] = False,
+    skip_ingest: Annotated[
+        bool, typer.Option("--skip-ingest", help="Skip the Brain RAG ingest stage.")
+    ] = False,
+    skip_wiki: Annotated[
+        bool, typer.Option("--skip-wiki", help="Skip the wiki synthesis stage.")
+    ] = False,
+    no_synth: Annotated[
+        bool, typer.Option("--no-synth", help="Wiki: skip LLM synthesis (fast).")
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report each stage's plan; change nothing."),
+    ] = False,
+) -> None:
+    """
+    **Backfill** the whole second brain from journals in one pass.
+
+    Runs three idempotent, resumable stages over the full corpus:
+    `backfill-deltas` → `ingest-delta` → `wiki-rebuild`. Re-running resumes
+    safely (deltas skip-existing, ingest replaces, wiki overwrites).
+
+    Examples:
+
+        brain backfill --dry-run
+
+        brain backfill                       # full (LLM-heavy wiki stage)
+
+        brain backfill --skip-deltas --skip-ingest   # wiki only
+    """
+    _print_header("Backfilling second brain")
+    cfg = _get_config()
+
+    # ── Stage 1: deltas ───────────────────────────────────────────────────────
+    if not skip_deltas:
+        typer.echo("\n▶ Stage 1/3 — deltas")
+        bf = DeltaBackfiller(cfg)
+        if dry_run:
+            from brain.journal_parser import iter_journals, parse_checkpoint_file
+
+            blocks = sum(
+                len(parse_checkpoint_file(j)) for j in iter_journals(cfg.journal_dir)
+            )
+            typer.echo(f"   would ensure deltas for ~{blocks} blocks")
+        else:
+            s = bf.backfill()
+            typer.echo(
+                f"   blocks {s['blocks']}  written {s['written']}  skipped {s['skipped']}"
+            )
+
+    # ── Stage 2: ingest ───────────────────────────────────────────────────────
+    if not skip_ingest:
+        typer.echo("\n▶ Stage 2/3 — Brain ingest")
+        ip = DeltaIngestPipeline(cfg)
+        if dry_run:
+            typer.echo(f"   would ingest {len(ip.dates())} dates")
+        else:
+            s = ip.ingest_all(verbose=False)
+            typer.echo(
+                f"   dates {s['dates']}  entries {s['entries']}  chunks {s['chunks']}"
+            )
+
+    # ── Stage 3: wiki ─────────────────────────────────────────────────────────
+    if not skip_wiki:
+        typer.echo("\n▶ Stage 3/3 — wiki" + ("  (no synthesis)" if no_synth else ""))
+        wb = WikiBuilder(cfg)
+        if dry_run:
+            idx = wb._collect()
+            counts = {t: len(idx[t]) for t in idx}
+            typer.echo(f"   would write pages: {counts}")
+        else:
+            s = wb.rebuild(synth=not no_synth)
+            typer.echo(f"   pages written {s['written']}")
+
+    typer.echo("\n✅ Backfill complete.\n")
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────

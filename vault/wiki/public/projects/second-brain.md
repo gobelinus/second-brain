@@ -1,26 +1,48 @@
 ---
-title: Second Brain
+title: second-brain
 type: project
 sensitivity: public
-applied_provenances:
-  - file:/Users/tarun.arora/Forge/toolkit/checkpoints/journal/2026-06-27.md#second-brain-architecture
-updated: 2026-06-27
+entity: second-brain
+sources: 11 claims across 1 dates (2026-06-27 → 2026-06-27)
+last_rebuilt: 2026-06-27
 ---
 
-# Second Brain
+# second-brain
 
-Cross-links: [[session-checkpoint]] · [[brain]] · [[topic-context]] · [[llm-wiki-pattern]]
+## Current Understanding
 
-## Current State
-A personal knowledge system being built by wiring three existing pieces into one private git repo: `session-checkpoint` (capture), the Brain RAG project (retrieval), and a Karpathy-style wiki built by `topic-context` (synthesis). Phase 1 is shipped; the repo merge (Phase 0) and the wiki engine (Phase 3) are the next steps.
+* The project "second-brain" involves maintaining an immutable source of truth, referred to as the "session-checkpoint", which is derived from Brain vectors and wiki pages that can be rebuilt.
+* The second-brain repository (private git repo) contains three main directories: `vault/` for durable knowledge, `engine/` for Brain code, and `runtime/` for regenerable content (git-ignored).
+* Commit everything, including sensitive information, in the private repo; sensitivity is a classification for routing purposes only.
+* Wiki freshness is achieved through a hybrid approach: daily topic-context application and weekly rebuild against the immutable source.
+* The project reuses a provenance key file `<journal>#<anchor>` across todo, CMD, delta, and wiki entities for idempotency.
 
 ## Decisions
-- `session-checkpoint` is the single immutable source of truth; Brain vectors and wiki pages are derived and rebuildable, never sources. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
-- Merge checkpoint capture + Brain RAG + wiki into one private git repo `second-brain/` with three top-levels: `vault/` (durable), `engine/` (Brain code), `runtime/` (regenerable, gitignored). ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
-- The durable-knowledge directory is named `vault/`; `corpus`/`data` rejected as too generic. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
-- Commit everything including `sensitive/` in the private repo; sensitivity is a content classification for routing, not a git-tracking gate; the secret scanner still guards raw credentials. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
-- Recommended merge path (pending confirm) is to evolve the existing [[brain]] repo in place into `second-brain/`, preserving its git history and pre-commit security tooling. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
+
+- session-checkpoint is the single immutable source of truth; Brain vectors and wiki pages are derived and rebuildable.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Merge checkpoint capture + Brain RAG + wiki into one private git repo second-brain/ with vault/ (durable), engine/ (Brain code), runtime/ (regenerable, gitignored).  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Durable-knowledge directory is named vault/; corpus/data rejected as too generic.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Commit everything including sensitive/ in the private repo; sensitivity is a content classification for routing, not a git-tracking gate; secret scanner still guards credentials.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Wiki freshness is hybrid: topic-context apply daily (mutate/compound) + rebuild weekly (reconcile against immutable source).  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Provenance key file:<journal>#<anchor> is reused across todo, CMD, delta, and wiki for idempotency.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Recommended (pending confirm) merge path is to evolve the existing Brain repo in place into second-brain/, preserving its git history and pre-commit security tooling.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+
+## Learnings
+
+- Karpathy's LLM-Wiki pattern = immutable timestamped capture at the bottom, synthesized views derived on top; an alternative to re-retrieving raw docs (RAG).  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- session-checkpoint and the Brain project share the same append-only dated architecture; topic-context/checkpoint-index already form a partial regenerate-on-demand version of the wiki layer.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+
+## Facts / Artifacts
+
+- The delta entities block maps almost 1:1 onto Brain's SQLite structurer schema, so Brain can eventually trust the delta and skip re-structuring.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Phase 1 shipped: Step 6 delta emission added to session-checkpoint SKILL.md and journals moved to a journal/ subdir.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
 
 ## Open Problems
-- Phase 1 validated as of 2026-06-27; merge strategy (evolve-in-place vs fresh repo via git subtree) and repo rename still need explicit confirm. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
-- Journals/deltas are not directory-split public/sensitive (only the wiki + Brain collections are); the delta `sensitivity` field does the routing. Parked. ([2026-06-27](../../journal/2026-06-27.md#second-brain-architecture))
+
+- Phase 1 was unvalidated until this run; this checkpoint is the first exercise of the new journal/ + delta paths.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Merge strategy needs explicit confirm: Option A (evolve in place) vs Option B (fresh repo via git subtree), plus whether to rename the dir to second-brain/.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+- Parked: journals/deltas are not directory-split public/sensitive (only wiki + Brain collections are); the delta sensitivity field does the routing.  ^[2026-06-27](../../../journal/2026-06-27.md#second-brain-architecture)
+
+## Related
+
+**Technologies:** `ChromaDB` · `Karpathy LLM-Wiki` · `Ollama` · `RAG` · `SQLite` · `detect-secrets` · `git subtree` · `launchd` · `pre-commit`
